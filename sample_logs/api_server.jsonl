@@ -1,0 +1,19 @@
+{"timestamp": "2026-06-14T11:00:01.120Z", "level": "info", "service": "api-gateway", "msg": "Server listening", "port": 8080}
+{"timestamp": "2026-06-14T11:00:05.340Z", "level": "info", "service": "api-gateway", "msg": "GET /v1/users/4821 200", "latency_ms": 42}
+{"timestamp": "2026-06-14T11:00:06.010Z", "level": "info", "service": "checkout", "msg": "POST /v1/orders 201", "latency_ms": 88, "user": "alice@example.com"}
+{"timestamp": "2026-06-14T11:00:12.500Z", "level": "warning", "service": "checkout", "msg": "Upstream payments responded slowly", "latency_ms": 1900, "upstream": "payments-svc"}
+{"timestamp": "2026-06-14T11:00:15.220Z", "level": "error", "service": "checkout", "msg": "POST /v1/orders 502: upstream payments-svc connection refused", "upstream": "payments-svc", "client_ip": "203.0.113.44"}
+{"timestamp": "2026-06-14T11:00:16.880Z", "level": "error", "service": "checkout", "msg": "POST /v1/orders 502: upstream payments-svc connection refused", "upstream": "payments-svc", "client_ip": "203.0.113.51"}
+{"timestamp": "2026-06-14T11:00:18.300Z", "level": "error", "service": "payments-svc", "msg": "Database query failed: connection pool timeout", "query": "SELECT * FROM transactions WHERE id=?", "pool_size": 20}
+{"timestamp": "2026-06-14T11:00:19.110Z", "level": "error", "service": "checkout", "msg": "POST /v1/orders 502: upstream payments-svc connection refused", "upstream": "payments-svc", "client_ip": "203.0.113.66"}
+{"timestamp": "2026-06-14T11:00:20.450Z", "level": "error", "service": "payments-svc", "msg": "Database query failed: connection pool timeout", "query": "SELECT * FROM transactions WHERE id=?", "pool_size": 20}
+{"timestamp": "2026-06-14T11:00:21.700Z", "level": "warning", "service": "api-gateway", "msg": "Circuit breaker half-open for payments-svc"}
+{"timestamp": "2026-06-14T11:00:22.900Z", "level": "error", "service": "checkout", "msg": "POST /v1/orders 502: upstream payments-svc connection refused", "upstream": "payments-svc", "client_ip": "198.51.100.12"}
+{"timestamp": "2026-06-14T11:00:24.000Z", "level": "critical", "service": "payments-svc", "msg": "Database primary unreachable, all queries failing", "db_host": "db-payments-01.internal"}
+{"timestamp": "2026-06-14T11:00:25.330Z", "level": "error", "service": "payments-svc", "msg": "Database query failed: connection pool timeout", "query": "SELECT * FROM transactions WHERE id=?", "pool_size": 20}
+{"timestamp": "2026-06-14T11:00:27.640Z", "level": "warning", "service": "checkout", "msg": "Returning cached order confirmation due to upstream failure", "order_id": "ord_8841"}
+{"timestamp": "2026-06-14T11:00:30.100Z", "level": "error", "service": "checkout", "msg": "POST /v1/orders 502: upstream payments-svc connection refused", "upstream": "payments-svc", "client_ip": "203.0.113.90"}
+{"timestamp": "2026-06-14T11:00:33.220Z", "level": "critical", "service": "payments-svc", "msg": "Database primary unreachable, all queries failing", "db_host": "db-payments-01.internal"}
+{"timestamp": "2026-06-14T11:00:40.500Z", "level": "info", "service": "ops", "msg": "Auto-remediation: restarting db-payments-01 connection pool"}
+{"timestamp": "2026-06-14T11:00:55.880Z", "level": "info", "service": "payments-svc", "msg": "Database primary reachable again, pool reconnected", "db_host": "db-payments-01.internal"}
+{"timestamp": "2026-06-14T11:01:02.140Z", "level": "info", "service": "checkout", "msg": "POST /v1/orders 201", "latency_ms": 95, "user": "bob@example.com"}

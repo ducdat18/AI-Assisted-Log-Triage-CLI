@@ -1,0 +1,128 @@
+"""Group log lines into error clusters by structural similarity, then rank them.
+
+Real incident logs repeat the same error thousands of times with varying ids,
+timestamps and addresses. We collapse each line to a *template* (variable parts
+masked) so that "Connection to 10.0.0.1 failed" and "Connection to 10.0.0.9
+failed" land in the same cluster. Clusters are then scored by a blend of
+severity and frequency so the LLM only sees what matters.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from .parser import LogEntry, Severity
+
+# Substitutions that turn a concrete message into a stable template. Applied in
+# order; each replaces a class of "variable" token with a placeholder.
+_TEMPLATE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
+    (re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}"
+                r"(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d+)?\b"), "<IP>"),
+    (re.compile(r"0x[0-9a-fA-F]+"), "<HEX>"),
+    (re.compile(r"\b[0-9a-fA-F]{16,}\b"), "<HASH>"),
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b"), "<TS>"),
+    (re.compile(r"/[\w./\-]+"), "<PATH>"),
+    (re.compile(r"\b\d+(?:\.\d+)?(?:ms|s|kb|mb|gb)?\b", re.IGNORECASE), "<NUM>"),
+    (re.compile(r'"[^"]*"'), "<STR>"),
+    (re.compile(r"'[^']*'"), "<STR>"),
+    (re.compile(r"\s+"), " "),
+)
+
+
+def normalize(message: str) -> str:
+    """Collapse a concrete log message into a stable similarity template."""
+
+    template = message.strip()
+    for pattern, replacement in _TEMPLATE_RULES:
+        template = pattern.sub(replacement, template)
+    return template.strip()
+
+
+@dataclass
+class Cluster:
+    """A group of structurally-similar log entries."""
+
+    template: str
+    level: Severity | None
+    entries: list[LogEntry] = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.entries)
+
+    @property
+    def representative(self) -> LogEntry:
+        """A concrete example line for display / LLM context."""
+
+        return self.entries[0]
+
+    @property
+    def first_seen(self) -> datetime | None:
+        stamps = [e.timestamp for e in self.entries if e.timestamp]
+        return min(stamps) if stamps else None
+
+    @property
+    def last_seen(self) -> datetime | None:
+        stamps = [e.timestamp for e in self.entries if e.timestamp]
+        return max(stamps) if stamps else None
+
+    def severity_score(self) -> float:
+        """Rank weight: severity dominates strictly, frequency breaks ties.
+
+        Severity is scaled by a large constant so a more severe cluster always
+        outranks a less severe one regardless of volume (a single CRITICAL is
+        never buried under thousands of WARNINGs). Within one severity level,
+        ``log1p`` of the count rewards genuinely high-volume errors without
+        letting frequency dominate.
+        """
+
+        level_weight = float(self.level) if self.level is not None else float(Severity.INFO)
+        return level_weight * 1000.0 + math.log1p(self.count)
+
+
+def cluster_entries(
+    entries: list[LogEntry],
+    min_level: Severity | None = Severity.WARNING,
+) -> list[Cluster]:
+    """Cluster entries by template.
+
+    ``min_level`` filters out anything below the threshold (default: only
+    WARNING and above, since that is what triage cares about). Pass ``None`` to
+    cluster everything.
+    """
+
+    clusters: dict[tuple[str, int], Cluster] = {}
+    for entry in entries:
+        if min_level is not None:
+            if entry.level is None or entry.level < min_level:
+                continue
+        template = normalize(entry.message)
+        key = (template, int(entry.level) if entry.level is not None else -1)
+        cluster = clusters.get(key)
+        if cluster is None:
+            cluster = Cluster(template=template, level=entry.level)
+            clusters[key] = cluster
+        cluster.entries.append(entry)
+    return list(clusters.values())
+
+
+def rank_clusters(clusters: list[Cluster], top_n: int | None = None) -> list[Cluster]:
+    """Return clusters sorted by descending severity score."""
+
+    ranked = sorted(clusters, key=lambda c: c.severity_score(), reverse=True)
+    return ranked[:top_n] if top_n is not None else ranked
+
+
+def cluster_and_rank(
+    entries: list[LogEntry],
+    top_n: int | None = None,
+    min_level: Severity | None = Severity.WARNING,
+) -> list[Cluster]:
+    """Convenience pipeline: cluster then rank in one call."""
+
+    return rank_clusters(cluster_entries(entries, min_level=min_level), top_n=top_n)
