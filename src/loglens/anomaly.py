@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 
 from .clustering import Cluster
 from .parser import LogEntry, Severity
+from .scoring import burst_confidence, onset_confidence
 
 # A bucket size is chosen so a log spans roughly this many buckets: enough
 # resolution to localise an onset, few enough that each bucket has signal.
@@ -57,6 +58,7 @@ class Spike:
     errors: int
     baseline: float
     zscore: float
+    confidence: float = 0.0  # 0–1, how strongly this spike stands out
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class Burst:
     peak_start: datetime
     peak_count: int  # events within the densest single bucket
     concentration: float  # peak_count / count, in (0, 1]
+    confidence: float = 0.0  # 0–1, how confidently this is a burst vs. noise
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,7 @@ class AnomalyReport:
     onset: datetime | None
     baseline_errors: float  # pre-onset average errors/bucket
     peak_errors: int
+    onset_confidence: float = 0.0  # 0–1, confidence the onset is a real incident
 
     @property
     def has_anomalies(self) -> bool:
@@ -218,6 +222,7 @@ def _detect_bursts(clusters: list[Cluster], bucket_seconds: int, min_count: int 
                     peak_start=peak_start,
                     peak_count=peak_count,
                     concentration=concentration,
+                    confidence=burst_confidence(concentration, cluster.count),
                 )
             )
     bursts.sort(key=lambda b: (b.peak_count, b.concentration), reverse=True)
@@ -267,6 +272,7 @@ def detect_anomalies(
     pre = [b.errors for b in buckets if onset is None or b.start < onset]
     baseline_errors = sum(pre) / len(pre) if pre else 0.0
     bursts = _detect_bursts(clusters or [], width)
+    onset_conf = onset_confidence(spikes[0].zscore, len(spikes)) if spikes else 0.0
 
     return AnomalyReport(
         bucket_seconds=width,
@@ -276,6 +282,7 @@ def detect_anomalies(
         onset=onset,
         baseline_errors=round(baseline_errors, 3),
         peak_errors=max(error_series) if error_series else 0,
+        onset_confidence=onset_conf,
     )
 
 
@@ -295,6 +302,7 @@ def _attach_baselines(
                 errors=spike.errors,
                 baseline=round(sum(prior) / len(prior), 3),
                 zscore=spike.zscore,
+                confidence=onset_confidence(spike.zscore, 1),
             )
         )
     return result

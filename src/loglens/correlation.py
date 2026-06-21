@@ -24,6 +24,7 @@ from datetime import datetime
 
 from .clustering import Cluster
 from .parser import Severity
+from .scoring import link_confidence, trigger_confidence
 
 # A link is only proposed when bucket overlap and lag are within these bounds.
 _MIN_JACCARD = 0.2
@@ -51,6 +52,7 @@ class CascadeLink:
     effect: int
     lag_seconds: float
     jaccard: float
+    confidence: float = 0.0  # 0–1, how strongly the timing supports causation
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class CorrelationReport:
     timeline: tuple[TimelineEvent, ...]
     links: tuple[CascadeLink, ...]
     trigger: int | None  # index into timeline, or None
+    trigger_confidence: float = 0.0  # 0–1, confidence the trigger is the root
 
     @property
     def has_cascade(self) -> bool:
@@ -128,15 +131,53 @@ def correlate_clusters(clusters: list[Cluster], bucket_seconds: int) -> Correlat
             if score < _MIN_JACCARD:
                 continue
             if best is None or score > best.jaccard:
+                severity_ordered = _severity_ordered(timeline[cause], timeline[effect])
                 best = CascadeLink(
-                    cause=cause, effect=effect, lag_seconds=lag, jaccard=round(score, 3)
+                    cause=cause,
+                    effect=effect,
+                    lag_seconds=lag,
+                    jaccard=round(score, 3),
+                    confidence=link_confidence(score, lag, _MAX_LAG_SECONDS, severity_ordered),
                 )
         if best is not None:
             links.append(best)
 
     links_tuple = tuple(links)
     trigger = _pick_trigger(timeline, links_tuple)
-    return CorrelationReport(timeline=timeline, links=links_tuple, trigger=trigger)
+    trig_conf = _trigger_confidence(timeline, links_tuple, trigger)
+    return CorrelationReport(
+        timeline=timeline,
+        links=links_tuple,
+        trigger=trigger,
+        trigger_confidence=trig_conf,
+    )
+
+
+def _severity_ordered(cause: TimelineEvent, effect: TimelineEvent) -> bool:
+    """True when the cause is at least as severe as the effect."""
+
+    cause_lvl = float(cause.level) if cause.level is not None else 0.0
+    effect_lvl = float(effect.level) if effect.level is not None else 0.0
+    return cause_lvl >= effect_lvl
+
+
+def _trigger_confidence(
+    timeline: tuple[TimelineEvent, ...],
+    links: tuple[CascadeLink, ...],
+    trigger: int | None,
+) -> float:
+    """Confidence that ``trigger`` is the true cascade root."""
+
+    if trigger is None:
+        return 0.0
+    causes = {link.cause for link in links}
+    effects = {link.effect for link in links}
+    is_root = trigger in causes and trigger not in effects
+    n_effects = sum(1 for link in links if link.cause == trigger)
+    levels = sorted({float(e.level) for e in timeline if e.level is not None})
+    lvl = timeline[trigger].level
+    rank = (levels.index(float(lvl)) + 1) / len(levels) if lvl is not None and levels else 0.0
+    return trigger_confidence(is_root, n_effects, rank)
 
 
 def _pick_trigger(

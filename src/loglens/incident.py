@@ -25,6 +25,7 @@ from .clustering import Cluster
 from .correlation import CorrelationReport, correlate_clusters
 from .parser import LogEntry
 from .report import IncidentReport
+from .scoring import confidence_label
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,8 @@ def evidence_block(findings: IncidentFindings) -> str:
     if a.onset is not None:
         lines.append(
             f"Incident onset (first error spike): {a.onset.isoformat()} "
-            f"(baseline ~{a.baseline_errors} errors/bucket, peak {a.peak_errors})"
+            f"(baseline ~{a.baseline_errors} errors/bucket, peak {a.peak_errors}; "
+            f"confidence {a.onset_confidence:.2f} {confidence_label(a.onset_confidence)})"
         )
     else:
         lines.append("No clear error spike detected (errors evenly distributed).")
@@ -77,16 +79,17 @@ def evidence_block(findings: IncidentFindings) -> str:
         trig = c.timeline[c.trigger]
         lines.append(
             f"Likely trigger (earliest severe cause): "
-            f"{trig.template} @ {_fmt_time(trig.first_seen)}"
+            f"{trig.template} @ {_fmt_time(trig.first_seen)} "
+            f"(confidence {c.trigger_confidence:.2f} {confidence_label(c.trigger_confidence)})"
         )
 
     if c.has_cascade:
-        lines.append("Inferred cascade (cause -> effect, lag):")
+        lines.append("Inferred cascade (cause -> effect, lag, confidence):")
         for link in c.links[:8]:
             cause, effect = c.timeline[link.cause], c.timeline[link.effect]
             lines.append(
                 f"  {cause.template[:60]} -> {effect.template[:60]} "
-                f"(+{link.lag_seconds:.0f}s, overlap={link.jaccard})"
+                f"(+{link.lag_seconds:.0f}s, overlap={link.jaccard}, conf={link.confidence})"
             )
 
     if a.bursts:
@@ -153,7 +156,8 @@ def deterministic_report(
         chain = _cascade_chain_text(c)
         root_cause = (
             f"Most likely origin: {trig.template} "
-            f"(first seen {_fmt_time(trig.first_seen)}, {trig.count} occurrence(s)). "
+            f"(first seen {_fmt_time(trig.first_seen)}, {trig.count} occurrence(s); "
+            f"confidence {c.trigger_confidence:.2f} {confidence_label(c.trigger_confidence)}). "
         )
         if chain:
             root_cause += f"Observed propagation: {chain}."
@@ -242,7 +246,8 @@ def render_findings(findings: IncidentFindings, console: Console) -> None:
 
     if a.onset is not None:
         console.print(
-            f"[bold]Onset[/bold] {_fmt_time(a.onset)} · "
+            f"[bold]Onset[/bold] {_fmt_time(a.onset)} "
+            f"[dim](conf {a.onset_confidence:.2f} · {confidence_label(a.onset_confidence)})[/dim] · "
             f"baseline ~{a.baseline_errors} -> peak {a.peak_errors} errors/"
             f"{a.bucket_seconds}s · {len(a.spikes)} spike(s)\n"
         )
@@ -271,5 +276,6 @@ def render_findings(findings: IncidentFindings, console: Console) -> None:
             console.print(
                 f"  [cyan]{escape(cause.component or '?')}[/cyan] -> "
                 f"[magenta]{escape(effect.component or '?')}[/magenta] "
-                f"[dim](+{link.lag_seconds:.0f}s, overlap={link.jaccard})[/dim]"
+                f"[dim](+{link.lag_seconds:.0f}s, overlap={link.jaccard}, "
+                f"conf {link.confidence:.2f})[/dim]"
             )
