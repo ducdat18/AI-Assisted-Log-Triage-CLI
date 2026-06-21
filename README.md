@@ -24,7 +24,9 @@ PII/secrets first.
 
 ## What it does
 
-- **Auto-detects** plaintext *and* JSON-lines log formats.
+- **Auto-detects** plaintext, JSON-lines, **syslog** (RFC 3164/5424),
+  **nginx/apache** access logs, and **logfmt** — and stitches multi-line stack
+  traces into a single event. Reads `.gz`, multiple files, directories, or stdin.
 - **Clusters** repetitive errors into distinct failure signatures (so 5,000
   near-identical timeouts become one ranked cluster) — via hand-tuned regex
   templates *or* the [Drain](#drain-template-mining) parse-tree miner (`--drain`).
@@ -243,6 +245,17 @@ loglens watch /var/log/app.log --min-level ERROR --redact
 Tails the file from its end and prints each new error/warning as it arrives,
 marking the first occurrence of each distinct signature with `NEW`. Stop with
 `Ctrl+C`.
+
+### Compare two logs (diff)
+
+```bash
+loglens diff before.log after.log        # e.g. across a deploy
+```
+
+Clusters both logs and classifies every error signature as **new**, **worsened**,
+**improved**, **resolved**, or unchanged — the fastest way to answer "did this
+change introduce or worsen any failures?". Deterministic, no LLM. Add `--drain`,
+`--min-level`, or `--all` (to include unchanged signatures).
 
 ### Visualize in Grafana (Loki)
 

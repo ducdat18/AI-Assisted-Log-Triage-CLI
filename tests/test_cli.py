@@ -39,6 +39,43 @@ def test_version():
     assert "loglens" in result.stdout
 
 
+def test_analyze_semantic_and_infer():
+    result = runner.invoke(
+        cli.app, ["analyze", str(GAME_LOG), "--no-llm", "--semantic", "--infer-severity"]
+    )
+    assert result.exit_code == 0
+
+
+def test_analyze_with_baseline():
+    result = runner.invoke(
+        cli.app, ["analyze", str(GAME_LOG), "--no-llm", "--baseline", str(API_LOG)]
+    )
+    assert result.exit_code == 0
+
+
+def test_diff_command(tmp_path: Path):
+    before = tmp_path / "before.log"
+    after = tmp_path / "after.log"
+    before.write_text("2026-06-14 09:03:14 ERROR [db] timeout\n", encoding="utf-8")
+    after.write_text(
+        "2026-06-14 09:03:14 ERROR [db] timeout\n"
+        "2026-06-14 09:03:14 ERROR [db] timeout\n"
+        "2026-06-14 09:03:16 CRITICAL [pay] gateway down\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(cli.app, ["diff", str(before), str(after)])
+    assert result.exit_code == 0
+    assert "new" in result.stdout
+    assert "worsened" in result.stdout
+
+
+def test_diff_invalid_min_level(tmp_path: Path):
+    f = tmp_path / "x.log"
+    f.write_text("2026-06-14 09:03:14 ERROR boom\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["diff", str(f), str(f), "--min-level", "NOPE"])
+    assert result.exit_code == 2
+
+
 def test_analyze_no_llm_text():
     result = runner.invoke(cli.app, ["analyze", str(GAME_LOG), "--no-llm"])
     assert result.exit_code == 0

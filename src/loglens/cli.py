@@ -11,6 +11,7 @@ from rich.console import Console
 from . import __version__
 from .anomaly import detect_anomalies, learn_baseline
 from .clustering import cluster_and_rank, normalize
+from .diff import diff_clusters, render_diff
 from .exporters import DEFAULT_LOKI_URL, LokiClient, LokiError, build_streams
 from .incident import (
     analyze_incident,
@@ -353,6 +354,44 @@ def ship(
     console.print(
         "[dim]In Grafana (Explore → Loki): " '{job="loglens"} | level=~"error|critical"[/dim]'
     )
+
+
+@app.command()
+def diff(
+    before: Path = typer.Argument(
+        ..., exists=True, readable=True, help="The earlier / baseline log."
+    ),
+    after: Path = typer.Argument(
+        ..., exists=True, readable=True, help="The later log to compare against it."
+    ),
+    fmt: str | None = typer.Option(
+        None, "--format", "-f", help="Force log format (default: auto-detect)."
+    ),
+    min_level: str = typer.Option(
+        "WARNING", "--min-level", "-l", help="Minimum severity to include."
+    ),
+    drain: bool = typer.Option(False, "--drain", help="Cluster with the Drain template miner."),
+    show_unchanged: bool = typer.Option(False, "--all", help="Also show unchanged signatures."),
+) -> None:
+    """Diff two logs by error signature: what's NEW, WORSE, BETTER, or RESOLVED."""
+
+    threshold = Severity.from_text(min_level)
+    if threshold is None:
+        err_console.print(f"[red]Invalid --min-level '{min_level}'.[/red]")
+        raise typer.Exit(code=2)
+
+    method = "drain" if drain else "regex"
+    with console.status("[cyan]Parsing and clustering both logs…[/cyan]"):
+        before_clusters = cluster_and_rank(
+            parse_file(str(before), fmt=fmt), min_level=threshold, method=method
+        )
+        after_clusters = cluster_and_rank(
+            parse_file(str(after), fmt=fmt), min_level=threshold, method=method
+        )
+
+    report = diff_clusters(before_clusters, after_clusters)
+    console.print(f"[dim]{before.name} -> {after.name}[/dim]\n")
+    render_diff(report, console, show_unchanged=show_unchanged)
 
 
 if __name__ == "__main__":  # pragma: no cover
