@@ -12,6 +12,12 @@ from rich.console import Console
 from . import __version__
 from .clustering import cluster_and_rank, normalize
 from .exporters import DEFAULT_LOKI_URL, LokiClient, LokiError, build_streams
+from .incident import (
+    analyze_incident,
+    deterministic_report,
+    evidence_block,
+    render_findings,
+)
 from .llm import LLMError, available_providers, get_provider
 from .parser import Severity, parse_file, parse_line, parse_lines
 from .redact import redact
@@ -67,6 +73,14 @@ def analyze(
     token_budget: int = typer.Option(
         6000, "--token-budget", help="Approx. token budget for LLM context (triggers hierarchical summarization).",
     ),
+    no_llm: bool = typer.Option(
+        False, "--no-llm",
+        help="Skip the LLM entirely: build the report from deterministic analytics only.",
+    ),
+    drain: bool = typer.Option(
+        False, "--drain",
+        help="Cluster with the Drain template miner instead of regex templates.",
+    ),
 ) -> None:
     """Parse, cluster, and generate an incident report for LOGFILE."""
 
@@ -81,7 +95,8 @@ def analyze(
         err_console.print("[yellow]No log lines found.[/yellow]")
         raise typer.Exit(code=1)
 
-    clusters = cluster_and_rank(entries, top_n=top, min_level=threshold)
+    method = "drain" if drain else "regex"
+    clusters = cluster_and_rank(entries, top_n=top, min_level=threshold, method=method)
     if not clusters:
         console.print(
             f"[green]No entries at or above {threshold.name}. "
@@ -92,9 +107,23 @@ def analyze(
     total_matched = sum(c.count for c in clusters)
     console.print(
         f"[dim]Parsed {len(entries)} lines · {total_matched} at/above "
-        f"{threshold.name} · {len(clusters)} clusters shown[/dim]\n"
+        f"{threshold.name} · {len(clusters)} clusters shown · clusterer={method}[/dim]\n"
     )
     render_clusters_table(clusters, console)
+
+    # Deterministic analytics (onset, cascade, bursts) — runs with or without an LLM.
+    findings = analyze_incident(entries, clusters)
+    console.rule("[bold]Temporal & Cascade Analysis[/bold]")
+    render_findings(findings, console)
+
+    if no_llm:
+        report = deterministic_report(findings, clusters, source=logfile.name)
+        console.rule("[bold]Incident Report[/bold] [dim](deterministic, no LLM)[/dim]")
+        render_report(report, console)
+        if output:
+            output.write_text(report.to_markdown(logfile.name), encoding="utf-8")
+            console.print(f"\n[green]Markdown report written to[/green] {output}")
+        return
 
     if redact_flag:
         console.print("[dim]Redaction enabled — scrubbing PII/secrets before LLM calls.[/dim]")
@@ -105,6 +134,7 @@ def analyze(
             report = generate_report(
                 clusters, backend, source=logfile.name,
                 redact=redact_flag, token_budget=token_budget,
+                evidence=evidence_block(findings),
             )
     except LLMError as exc:
         err_console.print(f"\n[red]LLM error:[/red] {exc}")

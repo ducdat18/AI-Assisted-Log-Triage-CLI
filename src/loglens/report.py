@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -24,7 +25,9 @@ _SYSTEM_PROMPT = (
     "You are an experienced site-reliability engineer performing incident "
     "triage. You are given clustered, ranked error signatures extracted from a "
     "log file. Produce a concise, actionable incident report. Be specific and "
-    "avoid hedging. Use ONLY the exact section headers requested."
+    "avoid hedging. When a COMPUTED EVIDENCE block is present, treat its onset "
+    "time, trigger, and cascade as ground truth and build your narrative around "
+    "them. Use ONLY the exact section headers requested."
 )
 
 _SECTIONS = ("SUMMARY", "ROOT_CAUSE", "AFFECTED_COMPONENTS", "REMEDIATION")
@@ -46,7 +49,7 @@ AFFECTED_COMPONENTS:
 
 REMEDIATION:
 <numbered list of concrete, prioritized remediation steps>
-
+{evidence}
 --- LOG ERROR CLUSTERS (most severe first) ---
 {context}
 """
@@ -108,11 +111,18 @@ def generate_report(
     source: str,
     redact: bool = False,
     token_budget: int = 6000,
+    evidence: str | None = None,
 ) -> IncidentReport:
-    """Run the full triage prompt and return a structured :class:`IncidentReport`."""
+    """Run the full triage prompt and return a structured :class:`IncidentReport`.
+
+    ``evidence`` is an optional block of deterministically-computed facts (onset,
+    cascade, bursts) that grounds the model so it narrates over real analysis
+    instead of guessing the timeline.
+    """
 
     context = build_context(clusters, provider, redact=redact, token_budget=token_budget)
-    prompt = _PROMPT_TEMPLATE.format(context=context)
+    evidence_section = f"\n{evidence}\n" if evidence else ""
+    prompt = _PROMPT_TEMPLATE.format(context=context, evidence=evidence_section)
     raw = provider.generate(prompt, system=_SYSTEM_PROMPT)
     sections = _parse_sections(raw)
 
@@ -154,7 +164,7 @@ def render_clusters_table(clusters: list[Cluster], console: Console) -> None:
         table.add_row(
             f"[{color}]{level}[/{color}]",
             str(cluster.count),
-            cluster.template[:160],
+            escape(cluster.template[:160]),
         )
     console.print(table)
 
@@ -162,30 +172,32 @@ def render_clusters_table(clusters: list[Cluster], console: Console) -> None:
 def render_report(report: IncidentReport, console: Console) -> None:
     """Print the colored terminal incident summary."""
 
+    # Escape model/analytics text so bracketed tokens like "[db]" render
+    # literally instead of being parsed as Rich markup (and vanishing).
     console.print(
         Panel(
-            report.summary,
+            escape(report.summary),
             title="[bold]Incident Summary[/bold]",
             border_style="bright_red",
         )
     )
     console.print(
         Panel(
-            report.root_cause,
+            escape(report.root_cause),
             title="[bold]Most Likely Root Cause[/bold]",
             border_style="yellow",
         )
     )
     console.print(
         Panel(
-            report.affected_components,
+            escape(report.affected_components),
             title="[bold]Affected Components[/bold]",
             border_style="cyan",
         )
     )
     console.print(
         Panel(
-            report.remediation,
+            escape(report.remediation),
             title="[bold]Remediation Steps[/bold]",
             border_style="green",
         )

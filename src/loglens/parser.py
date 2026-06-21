@@ -174,30 +174,51 @@ def _parse_json_line(line_no: int, raw: str) -> LogEntry:
 _TEXT_TIMESTAMP = re.compile(
     r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?"
 )
-# Matches a severity token like " ERROR " / "[WARN]" / "level=error".
+_LEVEL_TOKENS = (
+    "TRACE|DEBUG|DBG|INFO|NOTICE|WARN|WARNING|ERROR|ERR|FATAL|CRIT|CRITICAL|EMERGENCY|PANIC"
+)
+# Matches a severity token like " ERROR " / "[WARN]" / "level=error" anywhere.
 _TEXT_LEVEL = re.compile(
-    r"(?<![A-Za-z])(?:level=)?\[?(?P<lvl>TRACE|DEBUG|DBG|INFO|NOTICE|WARN|WARNING|"
-    r"ERROR|ERR|FATAL|CRIT|CRITICAL|EMERGENCY|PANIC)\]?(?![A-Za-z])",
+    rf"(?<![A-Za-z])(?:level=)?\[?(?P<lvl>{_LEVEL_TOKENS})\]?(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# Same, but anchored at the start so we can strip a *leading* level prefix.
+_LEADING_LEVEL = re.compile(
+    rf"^(?:level=)?\[?(?P<lvl>{_LEVEL_TOKENS})\]?(?![A-Za-z])",
     re.IGNORECASE,
 )
 
 
 def _parse_text_line(line_no: int, raw: str) -> LogEntry:
-    text = raw.rstrip("\n")
+    """Parse a plaintext line, stripping a leading timestamp and level prefix.
+
+    The returned ``message`` is the log *body* — without the leading timestamp
+    and severity token — so cluster templates and component tags aren't buried
+    behind ``<TS> ERROR`` noise. A severity that appears only mid-line (e.g.
+    ``level=error`` inside the body) is still detected but left in place.
+    """
+
+    body = raw.rstrip("\n").strip()
     timestamp = None
-    ts_match = _TEXT_TIMESTAMP.match(text)
+    ts_match = _TEXT_TIMESTAMP.match(body)
     if ts_match:
         timestamp = _parse_timestamp(ts_match.group("ts"))
+        body = body[ts_match.end():].lstrip()
 
     level = None
-    lvl_match = _TEXT_LEVEL.search(text)
-    if lvl_match:
-        level = Severity.from_text(lvl_match.group("lvl"))
+    leading = _LEADING_LEVEL.match(body)
+    if leading:
+        level = Severity.from_text(leading.group("lvl"))
+        body = body[leading.end():].lstrip()
+    else:
+        anywhere = _TEXT_LEVEL.search(body)
+        if anywhere:
+            level = Severity.from_text(anywhere.group("lvl"))
 
     return LogEntry(
         line_no=line_no,
         raw=raw,
-        message=text.strip(),
+        message=body,
         level=level,
         timestamp=timestamp,
     )
