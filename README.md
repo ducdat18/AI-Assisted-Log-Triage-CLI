@@ -137,6 +137,9 @@ Key flags:
 | `--token-budget` | `6000` | Context budget; triggers hierarchical summarization. |
 | `--no-llm` | off | Skip the LLM; build the report from deterministic analytics only. |
 | `--drain` | off | Cluster with the Drain template miner instead of regex templates. |
+| `--semantic` | off | Merge synonym-split clusters by embedding similarity (local TF-IDF default). |
+| `--baseline` | — | A healthy log to learn the expected (seasonal) error rate from. |
+| `--infer-severity` | off | Infer a level for unlabeled lines from their text. |
 
 ### Sample output
 

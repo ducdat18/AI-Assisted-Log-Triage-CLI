@@ -23,6 +23,7 @@ from .parser import Severity, parse_file, parse_line, parse_lines
 from .redact import redact
 from .report import generate_report, render_clusters_table, render_report
 from .semantic import merge_similar
+from .severity_infer import apply_inference
 
 app = typer.Typer(
     add_completion=False,
@@ -115,6 +116,12 @@ def analyze(
         help="Merge near-duplicate clusters by embedding similarity (folds "
         "synonym-split errors together). Local/offline TF-IDF by default.",
     ),
+    infer_severity: bool = typer.Option(
+        False,
+        "--infer-severity",
+        help="Infer a severity for log lines that have no explicit level, from "
+        "their text, so unlabeled error lines are not missed by triage.",
+    ),
 ) -> None:
     """Parse, cluster, and generate an incident report for LOGFILE."""
 
@@ -128,6 +135,11 @@ def analyze(
     if not entries:
         err_console.print("[yellow]No log lines found.[/yellow]")
         raise typer.Exit(code=1)
+
+    if infer_severity:
+        entries, filled = apply_inference(entries)
+        if filled:
+            console.print(f"[dim]Inferred a severity for {filled} unlabeled line(s).[/dim]")
 
     baseline_model = None
     if baseline is not None:
