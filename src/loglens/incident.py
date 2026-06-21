@@ -61,6 +61,65 @@ def _fmt_time(ts: datetime | None) -> str:
     return ts.strftime("%H:%M:%S") if ts else "--:--:--"
 
 
+def findings_to_dict(findings: IncidentFindings) -> dict[str, object]:
+    """Serialize findings (with confidence) for the web dashboard / JSON API.
+
+    Mirrors what :func:`render_findings` shows: onset, spikes, bursts, the
+    timeline, and the cause→effect cascade — including every confidence so the
+    UI can render badges and a graph.
+    """
+
+    a = findings.anomaly
+    c = findings.correlation
+    return {
+        "bucket_seconds": a.bucket_seconds,
+        "onset": a.onset.isoformat() if a.onset else None,
+        "onset_confidence": a.onset_confidence,
+        "baseline_errors": a.baseline_errors,
+        "peak_errors": a.peak_errors,
+        "spikes": [
+            {"start": s.start.isoformat(), "errors": s.errors, "zscore": s.zscore} for s in a.spikes
+        ],
+        "bursts": [
+            {
+                "template": b.template,
+                "level": b.level.name if b.level else None,
+                "count": b.count,
+                "peak_count": b.peak_count,
+                "concentration": b.concentration,
+                "confidence": b.confidence,
+            }
+            for b in a.bursts
+        ],
+        "trigger": c.trigger,
+        "trigger_confidence": c.trigger_confidence,
+        "timeline": [
+            {
+                "order": e.order,
+                "first_seen": e.first_seen.isoformat(),
+                "level": e.level.name if e.level else None,
+                "count": e.count,
+                "component": e.component,
+                "template": e.template,
+                "is_trigger": e.order == c.trigger,
+            }
+            for e in c.timeline
+        ],
+        "cascade": [
+            {
+                "cause": link.cause,
+                "effect": link.effect,
+                "cause_component": c.timeline[link.cause].component,
+                "effect_component": c.timeline[link.effect].component,
+                "lag_seconds": link.lag_seconds,
+                "jaccard": link.jaccard,
+                "confidence": link.confidence,
+            }
+            for link in c.links
+        ],
+    }
+
+
 def evidence_block(findings: IncidentFindings) -> str:
     """A factual, computed summary the LLM should base its narrative on."""
 

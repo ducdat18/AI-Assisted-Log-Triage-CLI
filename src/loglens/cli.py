@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import typer
@@ -10,7 +9,7 @@ from rich.console import Console
 
 from . import __version__
 from .anomaly import detect_anomalies, learn_baseline
-from .clustering import cluster_and_rank, normalize
+from .clustering import cluster_and_rank
 from .diff import diff_clusters, render_diff
 from .exporters import (
     DEFAULT_LOKI_URL,
@@ -26,9 +25,9 @@ from .incident import (
     evidence_block,
     render_findings,
 )
+from .live import resolve_format, tail_entries
 from .llm import LLMError, available_providers, get_provider
-from .parser import Severity, parse_file, parse_line, parse_lines
-from .redact import redact
+from .parser import Severity, parse_file
 from .report import generate_report, render_clusters_table, render_report, write_report
 from .semantic import merge_similar
 from .severity_infer import apply_inference
@@ -279,15 +278,7 @@ def watch(
         err_console.print(f"[red]Invalid --min-level '{min_level}'.[/red]")
         raise typer.Exit(code=2)
 
-    resolved_fmt = fmt
-    if resolved_fmt is None:
-        with open(logfile, encoding="utf-8", errors="replace") as handle:
-            head = [next(handle, "") for _ in range(20)]
-        # Reuse the parser's detector via a full parse of the sample.
-        resolved_fmt = (
-            "json" if parse_lines(head) and head and head[0].strip().startswith("{") else "text"
-        )
-
+    resolved_fmt = resolve_format(str(logfile), fmt)
     console.print(
         f"[bold cyan]Watching[/bold cyan] {logfile} "
         f"(format={resolved_fmt}, min-level={threshold.name}). Press Ctrl+C to stop.\n"
@@ -299,31 +290,21 @@ def watch(
         Severity.WARNING: "yellow",
         Severity.NOTICE: "cyan",
     }
-    seen_templates: set[str] = set()
-    line_no = 0
     try:
-        with open(logfile, encoding="utf-8", errors="replace") as handle:
-            handle.seek(0, 2)  # jump to end: only surface *new* lines
-            while True:
-                line = handle.readline()
-                if not line:
-                    time.sleep(poll_interval)
-                    continue
-                line_no += 1
-                if not line.strip():
-                    continue
-                entry = parse_line(line_no, line, resolved_fmt)
-                if entry.level is None or entry.level < threshold:
-                    continue
-                message = redact(entry.message).text if redact_flag else entry.message
-                color = severity_color.get(entry.level, "white")
-                template = normalize(entry.message)
-                marker = "NEW " if template not in seen_templates else "    "
-                seen_templates.add(template)
-                ts = entry.timestamp.strftime("%H:%M:%S") if entry.timestamp else "--:--:--"
-                console.print(
-                    f"[dim]{ts}[/dim] [{color}]{marker}{entry.level.name:<8}[/{color}] {message}"
-                )
+        for surfaced in tail_entries(
+            str(logfile),
+            fmt=resolved_fmt,
+            threshold=threshold,
+            redact=redact_flag,
+            poll_interval=poll_interval,
+        ):
+            color = severity_color.get(surfaced.level, "white")
+            marker = "NEW " if surfaced.is_new else "    "
+            ts = surfaced.timestamp.strftime("%H:%M:%S") if surfaced.timestamp else "--:--:--"
+            console.print(
+                f"[dim]{ts}[/dim] [{color}]{marker}{surfaced.level.name:<8}[/{color}] "
+                f"{surfaced.message}"
+            )
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped watching.[/dim]")
 
@@ -437,6 +418,40 @@ def diff(
     report = diff_clusters(before_clusters, after_clusters)
     console.print(f"[dim]{before.name} -> {after.name}[/dim]\n")
     render_diff(report, console, show_unchanged=show_unchanged)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address (use 0.0.0.0 in Docker)."),
+    port: int = typer.Option(8000, "--port", help="Port to serve the dashboard on."),
+    logs_dir: Path = typer.Option(
+        Path("."),
+        "--logs-dir",
+        help="Directory the dashboard may browse and tail log files from.",
+    ),
+    provider: str | None = typer.Option(
+        None, "--provider", "-p", help="Default LLM provider for the dashboard."
+    ),
+) -> None:
+    """Launch the realtime web dashboard (requires the ``[web]`` extra)."""
+
+    try:
+        import uvicorn
+
+        from .web import create_app
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
+        err_console.print(
+            "[red]The web dashboard needs the optional extras.[/red] "
+            'Install them with: pip install -e ".[web]"'
+        )
+        raise typer.Exit(code=4) from exc
+
+    console.print(
+        f"[bold cyan]loglens dashboard[/bold cyan] on http://{host}:{port} "
+        f"(logs dir: {logs_dir})"
+    )
+    application = create_app(logs_dir=logs_dir, default_provider=provider)
+    uvicorn.run(application, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":  # pragma: no cover
