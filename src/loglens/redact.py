@@ -25,9 +25,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "APIKEY",
-        re.compile(
-            r"(?i)\b(?:api[_-]?key|secret|password|passwd|pwd|access[_-]?key)\s*[:=]\s*\S+"
-        ),
+        re.compile(r"(?i)\b(?:api[_-]?key|secret|password|passwd|pwd|access[_-]?key)\s*[:=]\s*\S+"),
     ),
     (
         "SECRET_PREFIX",
@@ -66,6 +64,7 @@ def redact(text: str) -> RedactionResult:
     counts: dict[str, int] = {}
     redacted = text
     for kind, pattern in _PATTERNS:
+
         def _replace(match: re.Match[str], _kind: str = kind) -> str:
             counts[_kind] = counts.get(_kind, 0) + 1
             return f"[REDACTED:{_kind}]"

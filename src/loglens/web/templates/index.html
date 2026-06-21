@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>loglens — incident dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>loglens <span class="dim">incident dashboard</span></h1>
+  <div class="dim small">logs dir: <code>{{ logs_dir }}</code></div>
+</header>
+
+<main>
+  <section class="controls panel">
+    <div class="row">
+      <label>Log file
+        <select id="path">
+          <option value="">— choose a file —</option>
+          {% for f in files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>or upload <input type="file" id="upload"></label>
+      <label>Min level
+        <select id="min_level">
+          <option>WARNING</option><option>ERROR</option><option>CRITICAL</option>
+          <option>INFO</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="drain"> Drain</label>
+      <label class="chk"><input type="checkbox" id="semantic"> Semantic</label>
+      <button id="analyze">Analyze now</button>
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="live"> Live tail (SSE auto-refresh)</label>
+      <span id="status" class="dim small"></span>
+    </div>
+  </section>
+
+  <section id="onset" class="panel hidden"></section>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Top clusters</h2>
+      <table id="clusters"><thead><tr><th>Lvl</th><th>Count</th><th>Component</th><th>Signature</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Cause → effect cascade</h2>
+      <div id="cascade" class="mermaid">graph LR; A[no data yet];</div>
+      <div id="cascade_list" class="small dim"></div>
+    </section>
+  </div>
+
+  <section class="panel hidden" id="report">
+    <h2>Incident report <span class="dim small">(deterministic)</span></h2>
+    <div class="report-grid">
+      <div><h3>Summary</h3><p id="r_summary"></p></div>
+      <div><h3>Root cause</h3><p id="r_cause"></p></div>
+      <div><h3>Affected</h3><p id="r_affected"></p></div>
+      <div><h3>Remediation</h3><p id="r_rem"></p></div>
+    </div>
+  </section>
+
+  <section class="panel" id="livepanel">
+    <h2>Live tail</h2>
+    <pre id="livefeed" class="feed"><span class="dim">Enable "Live tail" to stream new error lines…</span></pre>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

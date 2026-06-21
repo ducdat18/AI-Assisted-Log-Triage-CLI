@@ -2,33 +2,55 @@
 
 **AI-assisted log triage for operational and incident diagnostics.**
 
-`loglens` ingests raw application/server logs, automatically detects errors and
-anomalies, clusters them by similarity, and uses an LLM to produce a
-human-readable incident report — one-paragraph summary, most likely root cause,
-affected components, and concrete remediation steps. The goal is to cut the
-manual effort engineers spend digging through logs during an incident.
+`loglens` ingests raw application/server logs and runs a **deterministic
+analytics engine** over them: it clusters errors by similarity, detects *when*
+an incident began (statistical change-point on the error rate), reconstructs the
+**cause → effect cascade** between components from timing alone, and flags
+bursty failure signatures. An LLM is then *optional* — it narrates over the
+computed evidence rather than guessing it. With `--no-llm` the tool produces a
+full incident report with no model at all.
 
-The LLM backend is **pluggable**. It ships with a fully-local, free default
+This is the key design point: **the intelligence is computed, not prompted.**
+The onset time, the trigger component, and the cascade chain are real numbers
+derived from timestamps — not an LLM's best guess. The model only turns those
+facts into prose.
+
+The LLM backend (when used) is **pluggable**: a fully-local, free default
 (Ollama) and an optional hosted free-tier backend (Gemini). Nothing is sent
-anywhere unless you choose a remote provider — and even then a `--redact` flag
-scrubs PII/secrets first.
+anywhere unless you choose a remote provider — and even then `--redact` scrubs
+PII/secrets first.
 
 ---
 
 ## What it does
 
-- **Auto-detects** plaintext *and* JSON-lines log formats.
+- **Auto-detects** plaintext, JSON-lines, **syslog** (RFC 3164/5424),
+  **nginx/apache** access logs, and **logfmt** — and stitches multi-line stack
+  traces into a single event. Reads `.gz`, multiple files, directories, or stdin.
 - **Clusters** repetitive errors into distinct failure signatures (so 5,000
-  near-identical timeouts become one ranked cluster).
+  near-identical timeouts become one ranked cluster) — via hand-tuned regex
+  templates *or* the [Drain](#drain-template-mining) parse-tree miner (`--drain`).
 - **Ranks** clusters by a blend of severity and frequency, so the most
   important problems surface first.
-- **Triages** the top clusters with an LLM and generates:
+- **Detects incident onset** with a statistical change-point: error counts are
+  bucketed over time and scored against an adaptive EWMA baseline (z-score), so
+  loglens tells you *when* things broke, not just *that* they did.
+- **Reconstructs the cascade**: temporal co-occurrence (Jaccard overlap) between
+  clusters infers which failure *triggered* which, building a cause → effect
+  chain and naming the likely trigger component — all from timestamps, no LLM.
+- **Flags bursts**: clusters whose events pile into a short window (a cascading
+  fault) are separated from steady background noise.
+- **Runs offline with `--no-llm`**: a complete, reproducible incident report
+  built purely from the analytics above — no model, no network.
+- **Triages** the top clusters with an LLM (optional) and generates:
   1. a one-paragraph incident summary,
   2. the most likely root cause,
   3. affected components,
   4. concrete, prioritized remediation steps.
-- **Outputs** a clean Markdown report *and* a colored terminal summary.
-- **Watches** a live log file and surfaces anomalies in near-real-time.
+- **Outputs** a clean Markdown, **HTML**, or **JSON** report *and* a colored
+  terminal summary — and can **post the summary to a Slack/webhook** (`--webhook`).
+- **Watches** a live log file and surfaces anomalies in near-real-time (CLI or
+  the **web dashboard** with a live cascade graph + confidence — `loglens serve`).
 - **Redacts** emails, IPs, tokens, JWTs, and API keys before anything leaves
   your machine (`--redact`).
 - **Token-aware** hierarchical summarization so large logs never overflow the
@@ -109,14 +131,21 @@ Key flags:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--provider, -p` | `ollama` | LLM backend (`ollama`, `gemini`). Also `$LOGLENS_PROVIDER`. |
+| `--provider, -p` | `ollama` | LLM backend (`ollama`, `gemini`, `openai`, `openrouter`, `anthropic`). Also `$LOGLENS_PROVIDER`. |
 | `--model, -m` | provider default | Override the model name. |
 | `--format, -f` | auto | Force `text` or `json`. |
 | `--top, -n` | `8` | How many top clusters to send to the LLM. |
 | `--min-level, -l` | `WARNING` | Minimum severity to include. |
 | `--redact` | off | Strip PII/secrets before any LLM call. |
-| `--output, -o` | — | Write the Markdown report to a file. |
+| `--output, -o` | — | Write the report to a file; format from extension (`.md`/`.html`/`.json`). |
+| `--json` | off | Print the report as JSON to stdout (machine-readable). |
+| `--webhook` | — | Post the incident summary to a webhook URL (`--notify-style slack\|generic`). |
 | `--token-budget` | `6000` | Context budget; triggers hierarchical summarization. |
+| `--no-llm` | off | Skip the LLM; build the report from deterministic analytics only. |
+| `--drain` | off | Cluster with the Drain template miner instead of regex templates. |
+| `--semantic` | off | Merge synonym-split clusters by embedding similarity (local TF-IDF default). |
+| `--baseline` | — | A healthy log to learn the expected (seasonal) error rate from. |
+| `--infer-severity` | off | Infer a level for unlabeled lines from their text. |
 
 ### Sample output
 
@@ -165,6 +194,52 @@ Parsed 31 lines · 24 at/above WARNING · 7 clusters shown
 
 *(Exact wording varies by model; structure is fixed.)*
 
+### The analytics engine (no LLM required)
+
+Before any model is involved, loglens prints a **Temporal & Cascade Analysis**
+computed entirely from timestamps and counts:
+
+```
+Onset 09:03:12 · baseline ~0.0 -> peak 4 errors/10s · 2 spike(s)
+
+                    Incident timeline (by first appearance)
+ Time     Lvl     Comp          Signature
+ 09:02:31 WARN    worldsim      Tick budget exceeded: <NUM> on shard <NUM>
+ 09:03:14 ERRO *  db            Connection to <IP> failed: timeout after <NUM>
+ 09:03:25 ERRO    persistence   Failed to flush player state uid=<NUM>: db pool…
+ 09:03:40 CRIT    persistence   Write-ahead log backlog <NUM> entries, dropping…
+ 09:03:55 CRIT    worldsim      Shard <NUM> unresponsive for <NUM>, failover
+
+Inferred cascade
+  db -> persistence (+11s, overlap=0.375)
+  persistence -> worldsim (+30s, overlap=0.2)
+  persistence -> matchmaker (+23s, overlap=0.2)
+```
+
+The `*` marks the inferred **trigger** (earliest severe root). Run with
+`--no-llm` and the incident report itself is templated from these facts — fully
+deterministic and reproducible. How each piece is computed:
+
+- **Onset (change-point):** error counts are bucketed into adaptive time windows
+  and scored one-step-ahead against an EWMA mean *and* EWMA variance (West's
+  incremental algorithm). The first bucket exceeding the z-score threshold is the
+  onset — a spike inflates neither its own baseline nor its variance.
+- **Cascade:** each cluster's event times are projected onto a shared bucket grid;
+  pairwise Jaccard overlap measures temporal correlation. A `cause → effect` link
+  is proposed when two clusters overlap **and** the cause precedes the effect
+  within a lag bound. The earliest severe cluster that is a cause-but-never-effect
+  is surfaced as the trigger.
+- **Bursts:** a two-pointer sweep finds each cluster's densest single window;
+  clusters concentrating ≥60% of their events there are flagged as bursty.
+
+#### Drain template mining
+
+`--drain` swaps the hand-written regex templating for the **Drain** algorithm
+(He et al., 2017) — a fixed-depth parse tree that learns templates structurally:
+group by token count, descend on leading tokens, then merge similar messages,
+collapsing varying positions to `<*>`. It adapts to message shapes the regex
+rules don't cover, with no per-format rule maintenance.
+
 ### Watch a live log
 
 ```bash
@@ -174,6 +249,51 @@ loglens watch /var/log/app.log --min-level ERROR --redact
 Tails the file from its end and prints each new error/warning as it arrives,
 marking the first occurrence of each distinct signature with `NEW`. Stop with
 `Ctrl+C`.
+
+### Compare two logs (diff)
+
+```bash
+loglens diff before.log after.log        # e.g. across a deploy
+```
+
+Clusters both logs and classifies every error signature as **new**, **worsened**,
+**improved**, **resolved**, or unchanged — the fastest way to answer "did this
+change introduce or worsen any failures?". Deterministic, no LLM. Add `--drain`,
+`--min-level`, or `--all` (to include unchanged signatures).
+
+### Web dashboard (realtime)
+
+```bash
+pip install -e ".[web]"
+loglens serve --logs-dir ./sample_logs        # http://127.0.0.1:8000
+```
+
+A FastAPI dashboard that renders what Grafana can't: the incident **onset**, the
+**cause → effect cascade graph** (Mermaid), per-finding **confidence** badges, the
+ranked clusters, and the deterministic incident report. Pick a log under
+`--logs-dir` (or upload one) and hit **Analyze now**, or tick **Live tail** to
+stream new error lines over Server-Sent Events as they arrive. Flags:
+`--host/--port/--logs-dir/--provider`.
+
+### Run the whole stack with Docker
+
+One command brings up the dashboard, a local Ollama LLM, and Grafana+Loki —
+composable via **profiles** so you only run what you need:
+
+```bash
+# Everything: dashboard (:8000) + local LLM + Grafana (:3000) + Loki (:3100)
+docker compose -f deploy/docker-compose.yml --profile all up -d
+docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+
+# Or subsets:
+docker compose -f deploy/docker-compose.yml --profile dashboard up -d           # just the web UI
+docker compose -f deploy/docker-compose.yml --profile dashboard --profile llm up -d
+docker compose -f deploy/docker-compose.yml --profile observability up -d        # just Grafana+Loki
+```
+
+Drop logs into `./logs/` (mounted into the container at `/logs`) to browse and
+tail them from the dashboard; `sample_logs/` is mounted read-only at
+`/logs/samples`.
 
 ### Visualize in Grafana (Loki)
 
@@ -185,7 +305,7 @@ Grafana you can collapse thousands of near-identical errors into one series.
 One-command demo stack (Grafana + Loki, pre-provisioned):
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d        # starts Loki :3100 + Grafana :3000
+docker compose -f deploy/docker-compose.yml --profile observability up -d   # Loki :3100 + Grafana :3000
 loglens ship sample_logs/game_server.log
 loglens ship sample_logs/api_server.jsonl --redact
 # open http://localhost:3000  → dashboard "loglens — incident triage" is pre-loaded
@@ -216,31 +336,43 @@ severity), `--redact` (scrub PII/secrets before shipping), `--format/-f`.
 ## Architecture
 
 ```
-        ┌──────────┐   ┌────────────┐   ┌──────────────┐   ┌──────────┐
- logs → │  parser  │ → │ clustering │ → │  summarize    │ → │  report  │ → Markdown
-        │ (detect, │   │ (normalize,│   │ (token-aware, │   │ (prompt, │    + terminal
-        │  text/   │   │  rank by   │   │  hierarchical)│   │  parse,  │
-        │  json)   │   │  severity) │   │      │        │   │  render) │
-        └──────────┘   └────────────┘   └──────┼────────┘   └────┬─────┘
-                                               │                 │
-                            ┌──────────────────┴─────────────────┘
-                            ▼
-                      ┌───────────┐     redact (optional, pre-flight PII/secret scrub)
-                      │   llm/    │
-                      │  factory  │──► LLMProvider (abstract)
-                      └───────────┘        ├── OllamaProvider  (default, local)
-                                           └── GeminiProvider  (hosted free tier)
+        ┌──────────┐   ┌────────────┐   ┌──────────────────────────┐
+ logs → │  parser  │ → │ clustering │ → │   incident (analytics)    │
+        │ (detect, │   │ (regex OR  │   │  ┌─────────┐ ┌──────────┐ │
+        │  text/   │   │  Drain;    │   │  │ anomaly │ │correlation│ │
+        │  json)   │   │  rank by   │   │  │ onset,  │ │ cascade,  │ │
+        └──────────┘   │  severity) │   │  │ bursts  │ │ trigger   │ │
+                       └────────────┘   │  └─────────┘ └──────────┘ │
+                                        └───────────┬──────────────┘
+                                                    │  findings (deterministic)
+                          ┌─────────────────────────┼───────────────┐
+                          ▼                          ▼               │
+                   ┌─────────────┐           ┌──────────────┐        │
+                   │ --no-llm    │           │  report +    │ ◄──────┘ evidence
+                   │ deterministic│          │  summarize   │   grounds the LLM
+                   │ report      │           │  (LLM)       │
+                   └─────────────┘           └──────┬───────┘
+                                                    ▼
+                                            ┌───────────┐  redact (optional scrub)
+                                            │   llm/    │
+                                            │  factory  │──► LLMProvider (abstract)
+                                            └───────────┘    ├── OllamaProvider (local)
+                                                             └── GeminiProvider (hosted)
 ```
 
 Module layout (`src/loglens/`):
 
 | Module | Responsibility |
 |--------|----------------|
-| `parser.py` | Format auto-detection; plaintext & JSON-lines parsing into immutable `LogEntry` objects. |
-| `clustering.py` | Normalize messages to templates, group into `Cluster`s, rank by severity × frequency. |
+| `parser.py` | Format auto-detection; plaintext & JSON-lines parsing into immutable `LogEntry` objects (strips leading timestamp/level so templates stay clean). |
+| `clustering.py` | Normalize messages to templates (regex or Drain), group into `Cluster`s, rank by severity × frequency, extract the emitting component. |
+| `drain.py` | Online fixed-depth-tree (Drain) log template miner — structural clustering with no regex rules. |
+| `anomaly.py` | Time-bucketing, EWMA z-score spike detection, incident-onset change-point, per-cluster burst detection. **No LLM.** |
+| `correlation.py` | Temporal co-occurrence (Jaccard) between clusters → cause→effect cascade links + trigger inference. **No LLM.** |
+| `incident.py` | Ties anomaly + correlation into `IncidentFindings`; builds the deterministic (`--no-llm`) report and the evidence block that grounds the LLM. |
 | `redact.py` | Regex-based PII/secret scrubbing (emails, IPs, JWTs, tokens, API keys). |
 | `summarize.py` | Cheap token estimation + token-aware hierarchical (map-reduce) summarization. |
-| `report.py` | Builds the triage prompt, parses the structured response, renders Markdown + Rich panels. |
+| `report.py` | Builds the triage prompt (grounded on computed evidence), parses the structured response, renders Markdown + Rich panels. |
 | `llm/base.py` | The `LLMProvider` abstract interface + `LLMError`. |
 | `llm/providers/` | `OllamaProvider`, `GeminiProvider`. |
 | `llm/factory.py` | Resolves provider from `--provider` flag → `LOGLENS_PROVIDER` → default. |
@@ -265,12 +397,23 @@ No analysis code changes. Provider selection precedence is
 ```bash
 pip install -e ".[dev]"
 pytest                # run the suite
-pytest --cov          # with coverage
+pytest --cov          # with coverage (CI gate: >=80%)
+
+ruff check src tests  # lint
+black --check src tests  # formatting
+mypy src              # type checking
+bandit -q -c pyproject.toml -r src  # security scan
 ```
 
-Unit tests cover the parser, clustering/ranking, redaction, and report
-generation. The LLM is mocked in tests, so the suite runs fully offline and
-deterministically with no model or network required.
+CI (`.github/workflows/ci.yml`) runs all of the above on Python 3.11 and 3.12.
+Optional ML extras (`pip install -e ".[ml]"`) enable heavier analytics backends;
+the core falls back to pure-Python implementations when they are absent.
+
+Unit tests cover the parser, clustering/ranking, redaction, report generation,
+and the full analytics engine — Drain mining, anomaly/onset detection,
+cascade correlation, and the deterministic incident report. The LLM is mocked,
+so the suite runs fully offline and deterministically with no model or network
+required.
 
 ---
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Callable
+from collections.abc import Callable
 
 from .base import LLMError, LLMProvider
+from .providers.anthropic import AnthropicProvider
 from .providers.gemini import GeminiProvider
 from .providers.ollama import OllamaProvider
+from .providers.openai_compat import OpenAIProvider, OpenRouterProvider
 
 DEFAULT_PROVIDER = "ollama"
 
@@ -16,6 +18,9 @@ DEFAULT_PROVIDER = "ollama"
 _REGISTRY: dict[str, Callable[..., LLMProvider]] = {
     "ollama": OllamaProvider,
     "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
+    "openrouter": OpenRouterProvider,
+    "anthropic": AnthropicProvider,
 }
 
 
@@ -30,9 +35,7 @@ def resolve_provider_name(explicit: str | None = None) -> str:
 
     name = (explicit or os.environ.get("LOGLENS_PROVIDER") or DEFAULT_PROVIDER).lower()
     if name not in _REGISTRY:
-        raise LLMError(
-            f"Unknown provider '{name}'. Available: {', '.join(available_providers())}."
-        )
+        raise LLMError(f"Unknown provider '{name}'. Available: {', '.join(available_providers())}.")
     return name
 
 

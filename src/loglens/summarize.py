@@ -46,11 +46,7 @@ def _cluster_to_text(cluster: Cluster, redact: bool) -> str:
     span = ""
     if cluster.first_seen and cluster.last_seen:
         span = f" | window {cluster.first_seen.isoformat()} → {cluster.last_seen.isoformat()}"
-    return (
-        f"[{level} x{cluster.count}]{span}\n"
-        f"  template: {template}\n"
-        f"  example:  {sample}"
-    )
+    return f"[{level} x{cluster.count}]{span}\n" f"  template: {template}\n" f"  example:  {sample}"
 
 
 def build_digests(clusters: list[Cluster], redact: bool = False) -> list[ClusterDigest]:

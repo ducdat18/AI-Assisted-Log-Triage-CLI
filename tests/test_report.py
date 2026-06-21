@@ -36,8 +36,12 @@ class MockProvider(LLMProvider):
 
 def _error_entries(n: int) -> list[LogEntry]:
     return [
-        LogEntry(line_no=i, raw="db boom", message=f"Database query failed pool timeout {i}",
-                 level=Severity.ERROR)
+        LogEntry(
+            line_no=i,
+            raw="db boom",
+            message=f"Database query failed pool timeout {i}",
+            level=Severity.ERROR,
+        )
         for i in range(n)
     ]
 
@@ -59,8 +63,13 @@ def test_report_markdown_contains_all_sections():
     clusters = cluster_and_rank(_error_entries(3))
     report = generate_report(clusters, MockProvider(), source="api.log")
     md = report.to_markdown("api.log")
-    for header in ("# Incident Report", "## Summary", "## Most Likely Root Cause",
-                   "## Affected Components", "## Remediation Steps"):
+    for header in (
+        "# Incident Report",
+        "## Summary",
+        "## Most Likely Root Cause",
+        "## Affected Components",
+        "## Remediation Steps",
+    ):
         assert header in md
 
 
@@ -98,8 +107,12 @@ def test_build_context_triggers_hierarchical_summarization():
     # Many *distinct* clusters (alphabetic, so normalization keeps them apart)
     # force the digest over a tiny budget and trigger map-reduce summarization.
     entries = [
-        LogEntry(line_no=i, raw="e", message=f"subsystem {_alpha(i)} crashed unexpectedly",
-                 level=Severity.ERROR)
+        LogEntry(
+            line_no=i,
+            raw="e",
+            message=f"subsystem {_alpha(i)} crashed unexpectedly",
+            level=Severity.ERROR,
+        )
         for i in range(40)
     ]
     clusters = cluster_and_rank(entries)
@@ -112,8 +125,9 @@ def test_build_context_triggers_hierarchical_summarization():
 
 def test_redaction_applied_in_context():
     entries = [
-        LogEntry(line_no=1, raw="x", message="login failed for admin@corp.com",
-                 level=Severity.ERROR),
+        LogEntry(
+            line_no=1, raw="x", message="login failed for admin@corp.com", level=Severity.ERROR
+        ),
     ]
     clusters = cluster_and_rank(entries)
     context = build_context(clusters, MockProvider(), redact=True, token_budget=10000)

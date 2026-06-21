@@ -45,9 +45,7 @@ class OllamaProvider(LLMProvider):
             payload["system"] = system
 
         try:
-            response = requests.post(
-                self.endpoint, json=payload, timeout=self.timeout
-            )
+            response = requests.post(self.endpoint, json=payload, timeout=self.timeout)
         except requests.exceptions.ConnectionError as exc:
             raise LLMError(
                 f"Could not reach Ollama at {self.host}. Is it running? "
@@ -63,9 +61,7 @@ class OllamaProvider(LLMProvider):
                 f"Pull it first: `ollama pull {self.model}`."
             )
         if response.status_code >= 400:
-            raise LLMError(
-                f"Ollama returned HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise LLMError(f"Ollama returned HTTP {response.status_code}: {response.text[:200]}")
 
         try:
             data = response.json()
