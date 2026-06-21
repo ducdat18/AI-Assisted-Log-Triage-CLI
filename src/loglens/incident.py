@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from .anomaly import AnomalyReport, detect_anomalies
+from .anomaly import AnomalyReport, BaselineModel, detect_anomalies
 from .clustering import Cluster
 from .correlation import CorrelationReport, correlate_clusters
 from .parser import LogEntry
@@ -37,10 +37,18 @@ class IncidentFindings:
     bucket_seconds: int
 
 
-def analyze_incident(entries: list[LogEntry], clusters: list[Cluster]) -> IncidentFindings:
-    """Run temporal + correlation analysis over ranked ``clusters``."""
+def analyze_incident(
+    entries: list[LogEntry],
+    clusters: list[Cluster],
+    baseline: BaselineModel | None = None,
+) -> IncidentFindings:
+    """Run temporal + correlation analysis over ranked ``clusters``.
 
-    anomaly = detect_anomalies(entries, clusters=clusters)
+    When ``baseline`` (learned from a healthy log) is given, anomaly detection
+    scores against that seasonal expectation instead of the log's own history.
+    """
+
+    anomaly = detect_anomalies(entries, clusters=clusters, baseline=baseline)
     correlation = correlate_clusters(clusters, bucket_seconds=anomaly.bucket_seconds)
     return IncidentFindings(
         anomaly=anomaly,

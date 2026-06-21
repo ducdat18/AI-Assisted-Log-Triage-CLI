@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .anomaly import detect_anomalies, learn_baseline
 from .clustering import cluster_and_rank, normalize
 from .exporters import DEFAULT_LOKI_URL, LokiClient, LokiError, build_streams
 from .incident import (
@@ -101,6 +102,12 @@ def analyze(
         "--drain",
         help="Cluster with the Drain template miner instead of regex templates.",
     ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="A healthy log to learn the expected (seasonal) error rate from, so "
+        "the incident is scored against expectation rather than its own history.",
+    ),
 ) -> None:
     """Parse, cluster, and generate an incident report for LOGFILE."""
 
@@ -114,6 +121,13 @@ def analyze(
     if not entries:
         err_console.print("[yellow]No log lines found.[/yellow]")
         raise typer.Exit(code=1)
+
+    baseline_model = None
+    if baseline is not None:
+        baseline_entries = parse_file(str(baseline), fmt=fmt)
+        bucket_seconds = detect_anomalies(entries).bucket_seconds
+        baseline_model = learn_baseline(baseline_entries, bucket_seconds)
+        console.print(f"[dim]Learned seasonal baseline from {baseline.name}.[/dim]")
 
     method = "drain" if drain else "regex"
     clusters = cluster_and_rank(entries, top_n=top, min_level=threshold, method=method)
@@ -132,7 +146,7 @@ def analyze(
     render_clusters_table(clusters, console)
 
     # Deterministic analytics (onset, cascade, bursts) — runs with or without an LLM.
-    findings = analyze_incident(entries, clusters)
+    findings = analyze_incident(entries, clusters, baseline=baseline_model)
     console.rule("[bold]Temporal & Cascade Analysis[/bold]")
     render_findings(findings, console)
 

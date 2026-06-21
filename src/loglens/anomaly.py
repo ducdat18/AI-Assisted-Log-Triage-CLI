@@ -181,6 +181,99 @@ def _ewma_zscores(values: list[int], alpha: float = _EWMA_ALPHA) -> list[float]:
     return zscores
 
 
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def _robust_scale(values: list[float], center: float) -> float:
+    """A robust standard-deviation estimate from the median absolute deviation.
+
+    MAD is far less sensitive to the very spikes we are trying to detect than a
+    plain standard deviation, so the baseline it implies is not inflated by the
+    incident itself. Scaled by 1.4826 it is a consistent estimator of σ for
+    normal data.
+    """
+
+    mad = _median([abs(v - center) for v in values])
+    return mad * 1.4826
+
+
+def cusum_onset(
+    buckets: list[TimeBucket],
+    error_series: list[int],
+    slack_k: float = 0.5,
+    threshold_h: float = 4.0,
+) -> datetime | None:
+    """Detect a *sustained* upward shift in the error rate via CUSUM.
+
+    EWMA z-scores catch a sharp single-bucket spike; a CUSUM (cumulative sum)
+    chart instead accumulates small persistent excesses, so it flags a step
+    change that a spike test would miss. The running sum rises by each bucket's
+    excess over ``median + k·scale`` and resets at zero; it trips when it crosses
+    ``h·scale``. Returns the first tripping bucket's start, or ``None``.
+    """
+
+    if not error_series:
+        return None
+    center = _median([float(x) for x in error_series])
+    scale = _robust_scale([float(x) for x in error_series], center) or 1.0
+    running = 0.0
+    for bucket, value in zip(buckets, error_series, strict=False):
+        running = max(0.0, running + (value - center - slack_k * scale))
+        if running > threshold_h * scale and value > center:
+            return bucket.start
+    return None
+
+
+@dataclass(frozen=True)
+class BaselineModel:
+    """Expected errors-per-bucket learned from a *healthy* log, by hour of day.
+
+    Seasonality matters: 40 errors/min at 03:00 may be normal for a busy batch
+    window but alarming at noon. A baseline log teaches loglens the expected
+    shape so the incident log is scored against *expectation*, not just against
+    its own history.
+    """
+
+    by_hour: dict[int, float]
+    overall: float
+
+    def expected(self, when: datetime) -> float:
+        return self.by_hour.get(when.hour, self.overall)
+
+
+def learn_baseline(entries: list[LogEntry], bucket_seconds: int) -> BaselineModel:
+    """Learn expected errors-per-bucket, by hour of day, from healthy ``entries``."""
+
+    buckets = bucketize(_timed(entries), bucket_seconds)
+    sums: dict[int, float] = {}
+    counts: dict[int, int] = {}
+    for bucket in buckets:
+        hour = bucket.start.hour
+        sums[hour] = sums.get(hour, 0.0) + bucket.errors
+        counts[hour] = counts.get(hour, 0) + 1
+    by_hour = {h: sums[h] / counts[h] for h in sums}
+    overall = (sum(sums.values()) / sum(counts.values())) if counts else 0.0
+    return BaselineModel(by_hour=by_hour, overall=overall)
+
+
+def _baseline_zscores(buckets: list[TimeBucket], baseline: BaselineModel) -> list[float]:
+    """Score each bucket against the seasonal baseline (Poisson-style z)."""
+
+    scores: list[float] = []
+    for bucket in buckets:
+        expected = baseline.expected(bucket.start)
+        # Poisson variance ≈ mean; +1 guards the zero-expectation case.
+        scores.append((bucket.errors - expected) / math.sqrt(expected + 1.0))
+    return scores
+
+
 def _detect_onset(buckets: list[TimeBucket], spikes: list[Spike]) -> datetime | None:
     """The incident onset is the start of the first error spike."""
 
@@ -233,12 +326,16 @@ def detect_anomalies(
     entries: list[LogEntry],
     clusters: list[Cluster] | None = None,
     bucket_seconds: int | None = None,
+    baseline: BaselineModel | None = None,
 ) -> AnomalyReport:
     """Run the full temporal analysis over ``entries``.
 
     ``clusters`` (already ranked) are used only for per-cluster burst detection;
     pass ``None`` to skip it. ``bucket_seconds`` is auto-chosen from the log's
-    time span when not given.
+    time span when not given. When a ``baseline`` (learned from a healthy log) is
+    supplied, spikes are scored against that seasonal expectation; otherwise the
+    self-adaptive EWMA baseline is used. A CUSUM change-point provides a second
+    onset candidate for sustained shifts, and the earliest candidate wins.
     """
 
     timed = _timed(entries)
@@ -259,7 +356,10 @@ def detect_anomalies(
     buckets = bucketize(timed, width)
 
     error_series = [b.errors for b in buckets]
-    zscores = _ewma_zscores(error_series)
+    if baseline is not None:
+        zscores = _baseline_zscores(buckets, baseline)
+    else:
+        zscores = _ewma_zscores(error_series)
     spikes = [
         Spike(start=b.start, errors=b.errors, baseline=0.0, zscore=z)
         for b, z in zip(buckets, zscores, strict=False)
@@ -268,11 +368,21 @@ def detect_anomalies(
     # Backfill each spike's baseline (mean of error buckets strictly before it).
     spikes = _attach_baselines(buckets, spikes, error_series)
 
-    onset = _detect_onset(buckets, spikes)
+    # Onset = earliest of the spike-based onset and the CUSUM change-point.
+    spike_onset = _detect_onset(buckets, spikes)
+    change_onset = cusum_onset(buckets, error_series)
+    candidates = [o for o in (spike_onset, change_onset) if o is not None]
+    onset = min(candidates) if candidates else None
     pre = [b.errors for b in buckets if onset is None or b.start < onset]
     baseline_errors = sum(pre) / len(pre) if pre else 0.0
     bursts = _detect_bursts(clusters or [], width)
-    onset_conf = onset_confidence(spikes[0].zscore, len(spikes)) if spikes else 0.0
+    if spikes:
+        onset_conf = onset_confidence(spikes[0].zscore, len(spikes))
+    elif onset is not None:
+        # CUSUM-only onset (a sustained shift with no single sharp spike).
+        onset_conf = 0.6
+    else:
+        onset_conf = 0.0
 
     return AnomalyReport(
         bucket_seconds=width,
