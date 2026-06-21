@@ -22,6 +22,7 @@ from .llm import LLMError, available_providers, get_provider
 from .parser import Severity, parse_file, parse_line, parse_lines
 from .redact import redact
 from .report import generate_report, render_clusters_table, render_report
+from .semantic import merge_similar
 
 app = typer.Typer(
     add_completion=False,
@@ -108,6 +109,12 @@ def analyze(
         help="A healthy log to learn the expected (seasonal) error rate from, so "
         "the incident is scored against expectation rather than its own history.",
     ),
+    semantic: bool = typer.Option(
+        False,
+        "--semantic",
+        help="Merge near-duplicate clusters by embedding similarity (folds "
+        "synonym-split errors together). Local/offline TF-IDF by default.",
+    ),
 ) -> None:
     """Parse, cluster, and generate an incident report for LOGFILE."""
 
@@ -130,7 +137,12 @@ def analyze(
         console.print(f"[dim]Learned seasonal baseline from {baseline.name}.[/dim]")
 
     method = "drain" if drain else "regex"
-    clusters = cluster_and_rank(entries, top_n=top, min_level=threshold, method=method)
+    if semantic:
+        # Merge synonym-split clusters before taking the top N.
+        full = cluster_and_rank(entries, min_level=threshold, method=method)
+        clusters = merge_similar(full)[:top]
+    else:
+        clusters = cluster_and_rank(entries, top_n=top, min_level=threshold, method=method)
     if not clusters:
         console.print(
             f"[green]No entries at or above {threshold.name}. "
