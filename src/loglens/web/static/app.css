@@ -52,3 +52,11 @@ td.sig { font-family: ui-monospace, monospace; font-size: .8rem; }
 .feed .CRITICAL { color: var(--crit); } .feed .ERROR { color: var(--err); } .feed .WARNING { color: var(--warn-c); }
 .hidden { display: none; }
 code { font-family: ui-monospace, monospace; }
+button.ghost { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+button.ghost:hover { background: var(--accent); color: #fff; }
+.chatlog { display: flex; flex-direction: column; gap: .5rem; max-height: 20rem; overflow-y: auto; margin-bottom: .7rem; }
+.msg { padding: .5rem .8rem; border-radius: .6rem; max-width: 85%; white-space: pre-wrap; font-size: .9rem; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.msg.bot { align-self: flex-start; background: #0a0c10; border: 1px solid var(--line); }
+.chatrow { gap: .5rem; }
+.chatrow input { flex: 1; background: #0d0f14; color: var(--ink); border: 1px solid var(--line); border-radius: .45rem; padding: .55rem .7rem; }

@@ -23,10 +23,24 @@ from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from ..clustering import cluster_and_rank
-from ..incident import analyze_incident, deterministic_report, findings_to_dict
+from ..incident import (
+    analyze_incident,
+    deterministic_report,
+    evidence_block,
+    findings_to_dict,
+)
 from ..live import tail_entries
+from ..llm import LLMError, get_provider
 from ..parser import Severity, parse_file
 from ..semantic import merge_similar
+from .simulator import Simulator
+
+_CHAT_SYSTEM = (
+    "You are loglens, an SRE incident assistant. Answer the user's question about "
+    "the log/incident concisely. When COMPUTED EVIDENCE is provided, treat its "
+    "onset, trigger, and cascade as ground truth and base your answer on it rather "
+    "than guessing."
+)
 
 _HERE = Path(__file__).resolve().parent
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap on uploaded logs
@@ -41,6 +55,18 @@ def _resolve_in(logs_dir: Path, rel: str) -> Path:
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Log file not found.")
     return candidate
+
+
+def _evidence_for(path: str) -> str:
+    """Deterministic evidence block for a log, used to ground the chatbot."""
+
+    entries = parse_file(path)
+    clusters = cluster_and_rank(entries, min_level=Severity.WARNING)
+    if not clusters:
+        return "No WARNING+ entries found in the selected log."
+    findings = analyze_incident(entries, clusters)
+    top = "\n".join(f"- [{c.level.name if c.level else '?'}] {c.template}" for c in clusters[:8])
+    return f"{evidence_block(findings)}\n\nTop clusters:\n{top}"
 
 
 def _analyze_path(path: str, *, min_level: str, drain: bool, semantic: bool) -> dict[str, object]:
@@ -82,6 +108,9 @@ def create_app(logs_dir: str | Path = ".", default_provider: str | None = None) 
     app = FastAPI(title="loglens dashboard", docs_url="/api/docs")
     templates = Jinja2Templates(directory=str(_HERE / "templates"))
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
+
+    _SIM_NAME = "_sim.log"
+    simulator = Simulator(root / _SIM_NAME)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -142,5 +171,37 @@ def create_app(logs_dir: str | Path = ".", default_provider: str | None = None) 
                 yield f"data: {json.dumps(payload)}\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.post("/api/simulate")
+    def api_simulate(speed: float = Form(default=1.0)) -> dict[str, object]:
+        """Start writing a synthetic incident to ``_sim.log`` for a live demo."""
+
+        simulator.start(speed=max(0.25, min(speed, 20.0)))
+        return {"path": _SIM_NAME, "running": simulator.running}
+
+    @app.post("/api/simulate/stop")
+    def api_simulate_stop() -> dict[str, object]:
+        simulator.stop()
+        return {"running": False}
+
+    @app.post("/api/chat")
+    def api_chat(
+        message: str = Form(...),
+        path: str | None = Form(default=None),
+    ) -> dict[str, str]:
+        """Answer a question about the incident, grounded on computed evidence."""
+
+        context = ""
+        if path:
+            context = _evidence_for(str(_resolve_in(root, path)))
+        prompt = (
+            f"--- COMPUTED EVIDENCE ---\n{context}\n\n" if context else ""
+        ) + f"Question: {message}"
+        try:
+            backend = get_provider(default_provider)
+            answer = backend.generate(prompt, system=_CHAT_SYSTEM)
+        except LLMError as exc:
+            return {"answer": f"(LLM unavailable: {exc})"}
+        return {"answer": answer}
 
     return app

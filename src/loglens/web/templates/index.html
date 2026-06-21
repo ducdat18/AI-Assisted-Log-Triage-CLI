@@ -32,6 +32,7 @@
       <label class="chk"><input type="checkbox" id="drain"> Drain</label>
       <label class="chk"><input type="checkbox" id="semantic"> Semantic</label>
       <button id="analyze">Analyze now</button>
+      <button id="simulate" class="ghost">▶ Simulate incident</button>
     </div>
     <div class="row">
       <label class="chk"><input type="checkbox" id="live"> Live tail (SSE auto-refresh)</label>
@@ -66,6 +67,15 @@
   <section class="panel" id="livepanel">
     <h2>Live tail</h2>
     <pre id="livefeed" class="feed"><span class="dim">Enable "Live tail" to stream new error lines…</span></pre>
+  </section>
+
+  <section class="panel" id="chatpanel">
+    <h2>Ask loglens <span class="dim small">(grounded on the selected log)</span></h2>
+    <div id="chatlog" class="chatlog"></div>
+    <div class="row chatrow">
+      <input type="text" id="chatinput" placeholder="e.g. What triggered this incident and how do I fix it?">
+      <button id="chatsend">Send</button>
+    </div>
   </section>
 </main>
 

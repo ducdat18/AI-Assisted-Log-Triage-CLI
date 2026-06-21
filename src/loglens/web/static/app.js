@@ -121,5 +121,76 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// --- Simulate incident ---------------------------------------------------
+let simulating = false;
+let autoTimer = null;
+
+function ensureOption(value) {
+  const sel = $("path");
+  if (![...sel.options].some((o) => o.value === value)) {
+    const opt = document.createElement("option");
+    opt.value = value; opt.textContent = value + " (simulated)";
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
+
+async function toggleSimulate() {
+  const btn = $("simulate");
+  if (simulating) {
+    await fetch("/api/simulate/stop", { method: "POST" });
+    simulating = false;
+    btn.textContent = "▶ Simulate incident";
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    setStatus("Simulation stopped.");
+    return;
+  }
+  setStatus("Starting simulation…");
+  const fd = new FormData(); fd.append("speed", "1.0");
+  const res = await fetch("/api/simulate", { method: "POST", body: fd });
+  if (!res.ok) { setStatus("Could not start simulation."); return; }
+  const data = await res.json();
+  simulating = true;
+  btn.textContent = "■ Stop simulation";
+  ensureOption(data.path);
+  $("live").checked = true; startLive();
+  // Auto-refresh the full analysis while the incident unfolds.
+  autoTimer = setInterval(analyze, 3000);
+  setStatus("Simulating incident — watch it analyze live.");
+}
+
+// --- Chatbot -------------------------------------------------------------
+function addChat(role, text) {
+  const log = $("chatlog");
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat() {
+  const input = $("chatinput");
+  const msg = input.value.trim();
+  if (!msg) return;
+  addChat("user", msg);
+  input.value = "";
+  addChat("bot", "…");
+  const pending = $("chatlog").lastChild;
+  const fd = new FormData();
+  fd.append("message", msg);
+  if ($("path").value) fd.append("path", $("path").value);
+  try {
+    const res = await fetch("/api/chat", { method: "POST", body: fd });
+    const data = await res.json();
+    pending.textContent = data.answer || "(no answer)";
+  } catch (e) {
+    pending.textContent = "Request failed: " + e;
+  }
+}
+
 $("analyze").addEventListener("click", analyze);
 $("live").addEventListener("change", toggleLive);
+$("simulate").addEventListener("click", toggleSimulate);
+$("chatsend").addEventListener("click", sendChat);
+$("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
