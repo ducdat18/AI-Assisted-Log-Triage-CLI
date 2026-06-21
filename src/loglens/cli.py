@@ -12,7 +12,14 @@ from . import __version__
 from .anomaly import detect_anomalies, learn_baseline
 from .clustering import cluster_and_rank, normalize
 from .diff import diff_clusters, render_diff
-from .exporters import DEFAULT_LOKI_URL, LokiClient, LokiError, build_streams
+from .exporters import (
+    DEFAULT_LOKI_URL,
+    LokiClient,
+    LokiError,
+    WebhookError,
+    build_streams,
+    notify,
+)
 from .incident import (
     analyze_incident,
     deterministic_report,
@@ -22,7 +29,7 @@ from .incident import (
 from .llm import LLMError, available_providers, get_provider
 from .parser import Severity, parse_file, parse_line, parse_lines
 from .redact import redact
-from .report import generate_report, render_clusters_table, render_report
+from .report import generate_report, render_clusters_table, render_report, write_report
 from .semantic import merge_similar
 from .severity_infer import apply_inference
 
@@ -32,6 +39,18 @@ app = typer.Typer(
 )
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _maybe_notify(report, source: str, webhook: str | None, style: str) -> None:
+    """Post the report to a webhook if one was configured; warn on failure."""
+
+    if not webhook:
+        return
+    try:
+        notify(report, source, webhook, style=style)
+        console.print(f"[green]Notified webhook[/green] ({style}).")
+    except WebhookError as exc:
+        err_console.print(f"[yellow]Webhook notification failed:[/yellow] {exc}")
 
 
 def _version_callback(value: bool) -> None:
@@ -88,7 +107,13 @@ def analyze(
         None,
         "--output",
         "-o",
-        help="Write the Markdown report to this path.",
+        help="Write the report to this path; format is chosen by extension "
+        "(.md / .html / .json).",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the report as JSON to stdout (machine-readable; implies no panels).",
     ),
     token_budget: int = typer.Option(
         6000,
@@ -122,6 +147,16 @@ def analyze(
         "--infer-severity",
         help="Infer a severity for log lines that have no explicit level, from "
         "their text, so unlabeled error lines are not missed by triage.",
+    ),
+    webhook: str | None = typer.Option(
+        None,
+        "--webhook",
+        help="Post the incident summary to this webhook URL when done.",
+    ),
+    notify_style: str = typer.Option(
+        "slack",
+        "--notify-style",
+        help="Webhook payload style: 'slack' (markdown) or 'generic' (JSON).",
     ),
 ) -> None:
     """Parse, cluster, and generate an incident report for LOGFILE."""
@@ -164,24 +199,30 @@ def analyze(
         raise typer.Exit(code=0)
 
     total_matched = sum(c.count for c in clusters)
-    console.print(
-        f"[dim]Parsed {len(entries)} lines · {total_matched} at/above "
-        f"{threshold.name} · {len(clusters)} clusters shown · clusterer={method}[/dim]\n"
-    )
-    render_clusters_table(clusters, console)
+    if not json_out:
+        console.print(
+            f"[dim]Parsed {len(entries)} lines · {total_matched} at/above "
+            f"{threshold.name} · {len(clusters)} clusters shown · clusterer={method}[/dim]\n"
+        )
+        render_clusters_table(clusters, console)
 
     # Deterministic analytics (onset, cascade, bursts) — runs with or without an LLM.
     findings = analyze_incident(entries, clusters, baseline=baseline_model)
-    console.rule("[bold]Temporal & Cascade Analysis[/bold]")
-    render_findings(findings, console)
+    if not json_out:
+        console.rule("[bold]Temporal & Cascade Analysis[/bold]")
+        render_findings(findings, console)
 
     if no_llm:
         report = deterministic_report(findings, clusters, source=logfile.name)
-        console.rule("[bold]Incident Report[/bold] [dim](deterministic, no LLM)[/dim]")
-        render_report(report, console)
+        if json_out:
+            print(report.to_json(logfile.name))
+        else:
+            console.rule("[bold]Incident Report[/bold] [dim](deterministic, no LLM)[/dim]")
+            render_report(report, console)
         if output:
-            output.write_text(report.to_markdown(logfile.name), encoding="utf-8")
-            console.print(f"\n[green]Markdown report written to[/green] {output}")
+            fmt_written = write_report(report, str(output), logfile.name)
+            console.print(f"\n[green]{fmt_written} report written to[/green] {output}")
+        _maybe_notify(report, logfile.name, webhook, notify_style)
         return
 
     if redact_flag:
@@ -202,12 +243,16 @@ def analyze(
         err_console.print(f"\n[red]LLM error:[/red] {exc}")
         raise typer.Exit(code=3) from exc
 
-    console.rule("[bold]Incident Report[/bold]")
-    render_report(report, console)
+    if json_out:
+        print(report.to_json(logfile.name))
+    else:
+        console.rule("[bold]Incident Report[/bold]")
+        render_report(report, console)
 
     if output:
-        output.write_text(report.to_markdown(logfile.name), encoding="utf-8")
-        console.print(f"\n[green]Markdown report written to[/green] {output}")
+        fmt_written = write_report(report, str(output), logfile.name)
+        console.print(f"\n[green]{fmt_written} report written to[/green] {output}")
+    _maybe_notify(report, logfile.name, webhook, notify_style)
 
 
 @app.command()

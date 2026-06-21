@@ -91,6 +91,22 @@ def test_analyze_no_llm_json_with_output(tmp_path: Path):
     assert "# Incident Report" in out.read_text(encoding="utf-8")
 
 
+def test_analyze_json_stdout():
+    result = runner.invoke(cli.app, ["analyze", str(GAME_LOG), "--no-llm", "--json"])
+    assert result.exit_code == 0
+    import json as _json
+
+    data = _json.loads(result.stdout)
+    assert "summary" in data and "root_cause" in data
+
+
+def test_analyze_html_output(tmp_path: Path):
+    out = tmp_path / "report.html"
+    result = runner.invoke(cli.app, ["analyze", str(GAME_LOG), "--no-llm", "--output", str(out)])
+    assert result.exit_code == 0
+    assert "<!doctype html>" in out.read_text(encoding="utf-8").lower()
+
+
 def test_analyze_drain_no_llm():
     result = runner.invoke(cli.app, ["analyze", str(GAME_LOG), "--no-llm", "--drain"])
     assert result.exit_code == 0

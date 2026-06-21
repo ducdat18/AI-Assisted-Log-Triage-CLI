@@ -47,7 +47,8 @@ PII/secrets first.
   2. the most likely root cause,
   3. affected components,
   4. concrete, prioritized remediation steps.
-- **Outputs** a clean Markdown report *and* a colored terminal summary.
+- **Outputs** a clean Markdown, **HTML**, or **JSON** report *and* a colored
+  terminal summary — and can **post the summary to a Slack/webhook** (`--webhook`).
 - **Watches** a live log file and surfaces anomalies in near-real-time.
 - **Redacts** emails, IPs, tokens, JWTs, and API keys before anything leaves
   your machine (`--redact`).
@@ -129,13 +130,15 @@ Key flags:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--provider, -p` | `ollama` | LLM backend (`ollama`, `gemini`). Also `$LOGLENS_PROVIDER`. |
+| `--provider, -p` | `ollama` | LLM backend (`ollama`, `gemini`, `openai`, `openrouter`, `anthropic`). Also `$LOGLENS_PROVIDER`. |
 | `--model, -m` | provider default | Override the model name. |
 | `--format, -f` | auto | Force `text` or `json`. |
 | `--top, -n` | `8` | How many top clusters to send to the LLM. |
 | `--min-level, -l` | `WARNING` | Minimum severity to include. |
 | `--redact` | off | Strip PII/secrets before any LLM call. |
-| `--output, -o` | — | Write the Markdown report to a file. |
+| `--output, -o` | — | Write the report to a file; format from extension (`.md`/`.html`/`.json`). |
+| `--json` | off | Print the report as JSON to stdout (machine-readable). |
+| `--webhook` | — | Post the incident summary to a webhook URL (`--notify-style slack\|generic`). |
 | `--token-budget` | `6000` | Context budget; triggers hierarchical summarization. |
 | `--no-llm` | off | Skip the LLM; build the report from deterministic analytics only. |
 | `--drain` | off | Cluster with the Drain template miner instead of regex templates. |

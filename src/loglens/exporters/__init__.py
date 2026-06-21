@@ -9,6 +9,7 @@ from .loki import (
     build_streams,
     signature,
 )
+from .webhook import WebhookError, notify
 
 __all__ = [
     "LokiClient",
@@ -16,4 +17,6 @@ __all__ = [
     "build_streams",
     "signature",
     "DEFAULT_LOKI_URL",
+    "WebhookError",
+    "notify",
 ]

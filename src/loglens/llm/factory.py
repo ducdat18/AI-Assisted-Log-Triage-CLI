@@ -6,8 +6,10 @@ import os
 from collections.abc import Callable
 
 from .base import LLMError, LLMProvider
+from .providers.anthropic import AnthropicProvider
 from .providers.gemini import GeminiProvider
 from .providers.ollama import OllamaProvider
+from .providers.openai_compat import OpenAIProvider, OpenRouterProvider
 
 DEFAULT_PROVIDER = "ollama"
 
@@ -16,6 +18,9 @@ DEFAULT_PROVIDER = "ollama"
 _REGISTRY: dict[str, Callable[..., LLMProvider]] = {
     "ollama": OllamaProvider,
     "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
+    "openrouter": OpenRouterProvider,
+    "anthropic": AnthropicProvider,
 }
 
 
