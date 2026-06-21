@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
-from typing import Iterable
 
 # --- Severity levels -------------------------------------------------------
 
@@ -30,7 +30,7 @@ class Severity(IntEnum):
     CRITICAL = 50
 
     @classmethod
-    def from_text(cls, text: str | None) -> "Severity | None":
+    def from_text(cls, text: str | None) -> Severity | None:
         if not text:
             return None
         return _LEVEL_ALIASES.get(text.strip().upper())
@@ -203,13 +203,13 @@ def _parse_text_line(line_no: int, raw: str) -> LogEntry:
     ts_match = _TEXT_TIMESTAMP.match(body)
     if ts_match:
         timestamp = _parse_timestamp(ts_match.group("ts"))
-        body = body[ts_match.end():].lstrip()
+        body = body[ts_match.end() :].lstrip()
 
     level = None
     leading = _LEADING_LEVEL.match(body)
     if leading:
         level = Severity.from_text(leading.group("lvl"))
-        body = body[leading.end():].lstrip()
+        body = body[leading.end() :].lstrip()
     else:
         anywhere = _TEXT_LEVEL.search(body)
         if anywhere:
@@ -241,7 +241,7 @@ def parse_lines(lines: Iterable[str], fmt: str | None = None) -> list[LogEntry]:
     Blank lines are skipped. ``fmt`` is auto-detected when not provided.
     """
 
-    materialised = [line for line in lines]
+    materialised = list(lines)
     resolved_fmt = fmt or detect_format(materialised)
     entries: list[LogEntry] = []
     for index, raw in enumerate(materialised, start=1):
@@ -254,5 +254,5 @@ def parse_lines(lines: Iterable[str], fmt: str | None = None) -> list[LogEntry]:
 def parse_file(path: str, fmt: str | None = None) -> list[LogEntry]:
     """Read and parse a log file from disk."""
 
-    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+    with open(path, encoding="utf-8", errors="replace") as handle:
         return parse_lines(handle, fmt)

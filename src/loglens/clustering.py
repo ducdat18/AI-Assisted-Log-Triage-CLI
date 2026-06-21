@@ -19,10 +19,18 @@ from .parser import LogEntry, Severity
 # Substitutions that turn a concrete message into a stable template. Applied in
 # order; each replaces a class of "variable" token with a placeholder.
 _TEMPLATE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
-    (re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}"
-                r"(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d+)?\b"), "<IP>"),
+    (
+        re.compile(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-" r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+        ),
+        "<UUID>",
+    ),
+    (
+        re.compile(
+            r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}" r"(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d+)?\b"
+        ),
+        "<IP>",
+    ),
     (re.compile(r"0x[0-9a-fA-F]+"), "<HEX>"),
     (re.compile(r"\b[0-9a-fA-F]{16,}\b"), "<HASH>"),
     (re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b"), "<TS>"),
@@ -129,9 +137,8 @@ def cluster_entries(
 
     clusters: dict[tuple[str, int], Cluster] = {}
     for entry in entries:
-        if min_level is not None:
-            if entry.level is None or entry.level < min_level:
-                continue
+        if min_level is not None and (entry.level is None or entry.level < min_level):
+            continue
         template = normalize(entry.message)
         key = (template, int(entry.level) if entry.level is not None else -1)
         cluster = clusters.get(key)
@@ -157,8 +164,7 @@ def cluster_entries_drain(
     from .drain import DrainMiner  # local import: optional code path
 
     filtered = [
-        e for e in entries
-        if min_level is None or (e.level is not None and e.level >= min_level)
+        e for e in entries if min_level is None or (e.level is not None and e.level >= min_level)
     ]
     miner = DrainMiner(sim_th=sim_th)
     assignments = [(e, miner.add_id(e.message)) for e in filtered]

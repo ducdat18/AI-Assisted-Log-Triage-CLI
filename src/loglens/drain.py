@@ -102,7 +102,7 @@ class DrainMiner:
     def _similarity(template: list[str], tokens: list[str]) -> float:
         if not template:
             return 0.0
-        same = sum(1 for a, b in zip(template, tokens) if a == b or a == _WILDCARD)
+        same = sum(1 for a, b in zip(template, tokens, strict=False) if a in (b, _WILDCARD))
         return same / len(template)
 
     def _assign(self, message: str) -> _LogGroup | None:
@@ -120,7 +120,9 @@ class DrainMiner:
             if sim > best_sim:
                 best_sim, best = sim, group
         if best is not None and best_sim >= self.sim_th:
-            best.tokens = [a if (a == b) else _WILDCARD for a, b in zip(best.tokens, tokens)]
+            best.tokens = [
+                a if (a == b) else _WILDCARD for a, b in zip(best.tokens, tokens, strict=False)
+            ]
             best.count += 1
             return best
         group = _LogGroup(group_id=self._next_id, tokens=list(tokens), count=1)

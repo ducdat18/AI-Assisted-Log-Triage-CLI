@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from typing import TypedDict
 
 import requests
 
@@ -25,6 +26,13 @@ DEFAULT_LOKI_URL = "http://localhost:3100"
 _PUSH_PATH = "/loki/api/v1/push"
 
 
+class LokiStream(TypedDict):
+    """One Loki push stream: a set of labels plus its ``[ts_ns, line]`` values."""
+
+    stream: dict[str, str]
+    values: list[list[str]]
+
+
 class LokiError(RuntimeError):
     """Raised when pushing to Loki fails."""
 
@@ -32,7 +40,9 @@ class LokiError(RuntimeError):
 def signature(message: str) -> str:
     """Stable short hash of a message's normalized cluster template."""
 
-    return hashlib.sha1(normalize(message).encode("utf-8")).hexdigest()[:10]
+    # Not a security hash — just a short, stable label for grouping in Grafana.
+    digest = hashlib.sha1(normalize(message).encode("utf-8"), usedforsecurity=False)
+    return digest.hexdigest()[:10]
 
 
 def _entry_timestamp_ns(entry: LogEntry, base_ns: int, index: int) -> int:
@@ -52,7 +62,7 @@ def build_streams(
     entries: list[LogEntry],
     source: str,
     redact: bool = False,
-) -> list[dict[str, object]]:
+) -> list[LokiStream]:
     """Group entries into Loki streams keyed by ``(level, cluster)``.
 
     Returns the ``streams`` array of a Loki push payload. Values within each
@@ -70,7 +80,7 @@ def build_streams(
         ts_ns = _entry_timestamp_ns(entry, base_ns, index)
         grouped.setdefault((level, cluster), []).append((ts_ns, line))
 
-    streams: list[dict[str, object]] = []
+    streams: list[LokiStream] = []
     for (level, cluster), values in grouped.items():
         values.sort(key=lambda pair: pair[0])
         streams.append(
@@ -98,12 +108,12 @@ class LokiClient:
     def push_endpoint(self) -> str:
         return f"{self.url}{_PUSH_PATH}"
 
-    def push(self, streams: list[dict[str, object]]) -> int:
+    def push(self, streams: list[LokiStream]) -> int:
         """Push ``streams`` to Loki. Returns the number of entries shipped."""
 
         if not streams:
             return 0
-        entry_count = sum(len(s["values"]) for s in streams)  # type: ignore[arg-type]
+        entry_count = sum(len(s["values"]) for s in streams)
         try:
             response = requests.post(
                 self.push_endpoint,
@@ -122,7 +132,6 @@ class LokiClient:
         # Loki returns 204 No Content on a successful push.
         if response.status_code not in (200, 204):
             raise LokiError(
-                f"Loki rejected the push (HTTP {response.status_code}): "
-                f"{response.text[:300]}"
+                f"Loki rejected the push (HTTP {response.status_code}): " f"{response.text[:300]}"
             )
         return entry_count

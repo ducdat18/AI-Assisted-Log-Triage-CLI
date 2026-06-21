@@ -158,7 +158,9 @@ def deterministic_report(
         if chain:
             root_cause += f"Observed propagation: {chain}."
     else:
-        root_cause = "No single trigger could be isolated from timing alone; review the top clusters below."
+        root_cause = (
+            "No single trigger could be isolated from timing alone; review the top clusters below."
+        )
 
     # Affected components (ordered by first appearance).
     affected = "\n".join(f"- {comp}" for comp in components) or "- (none identified)"

@@ -128,15 +128,20 @@ def correlate_clusters(clusters: list[Cluster], bucket_seconds: int) -> Correlat
             if score < _MIN_JACCARD:
                 continue
             if best is None or score > best.jaccard:
-                best = CascadeLink(cause=cause, effect=effect, lag_seconds=lag, jaccard=round(score, 3))
+                best = CascadeLink(
+                    cause=cause, effect=effect, lag_seconds=lag, jaccard=round(score, 3)
+                )
         if best is not None:
             links.append(best)
 
-    trigger = _pick_trigger(timeline, links)
-    return CorrelationReport(timeline=timeline, links=tuple(links), trigger=trigger)
+    links_tuple = tuple(links)
+    trigger = _pick_trigger(timeline, links_tuple)
+    return CorrelationReport(timeline=timeline, links=links_tuple, trigger=trigger)
 
 
-def _pick_trigger(timeline: tuple[TimelineEvent, ...], links: tuple[CascadeLink, ...]) -> int | None:
+def _pick_trigger(
+    timeline: tuple[TimelineEvent, ...], links: tuple[CascadeLink, ...]
+) -> int | None:
     """The trigger is the earliest severe cluster that causes downstream effects.
 
     Preference order: a cause that is never itself an effect (a true root),

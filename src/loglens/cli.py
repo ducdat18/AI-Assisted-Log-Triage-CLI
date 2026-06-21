@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -40,7 +39,10 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: bool = typer.Option(
-        False, "--version", callback=_version_callback, is_eager=True,
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
         help="Show version and exit.",
     ),
 ) -> None:
@@ -50,35 +52,53 @@ def main(
 @app.command()
 def analyze(
     logfile: Path = typer.Argument(..., exists=True, readable=True, help="Log file to analyze."),
-    provider: Optional[str] = typer.Option(
-        None, "--provider", "-p",
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        "-p",
         help=f"LLM backend ({', '.join(available_providers())}). "
-             "Defaults to $LOGLENS_PROVIDER or 'ollama'.",
+        "Defaults to $LOGLENS_PROVIDER or 'ollama'.",
     ),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Override the model name."),
-    fmt: Optional[str] = typer.Option(
-        None, "--format", "-f", help="Force log format: 'text' or 'json' (auto-detected by default).",
+    model: str | None = typer.Option(None, "--model", "-m", help="Override the model name."),
+    fmt: str | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="Force log format: 'text' or 'json' (auto-detected by default).",
     ),
-    top: int = typer.Option(8, "--top", "-n", min=1, help="Number of top clusters to send to the LLM."),
+    top: int = typer.Option(
+        8, "--top", "-n", min=1, help="Number of top clusters to send to the LLM."
+    ),
     min_level: str = typer.Option(
-        "WARNING", "--min-level", "-l",
+        "WARNING",
+        "--min-level",
+        "-l",
         help="Minimum severity to include (TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL).",
     ),
     redact_flag: bool = typer.Option(
-        False, "--redact", help="Strip PII/secrets before sending anything to the LLM.",
+        False,
+        "--redact",
+        help="Strip PII/secrets before sending anything to the LLM.",
     ),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Write the Markdown report to this path.",
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write the Markdown report to this path.",
     ),
     token_budget: int = typer.Option(
-        6000, "--token-budget", help="Approx. token budget for LLM context (triggers hierarchical summarization).",
+        6000,
+        "--token-budget",
+        help="Approx. token budget for LLM context (triggers hierarchical summarization).",
     ),
     no_llm: bool = typer.Option(
-        False, "--no-llm",
+        False,
+        "--no-llm",
         help="Skip the LLM entirely: build the report from deterministic analytics only.",
     ),
     drain: bool = typer.Option(
-        False, "--drain",
+        False,
+        "--drain",
         help="Cluster with the Drain template miner instead of regex templates.",
     ),
 ) -> None:
@@ -132,13 +152,16 @@ def analyze(
     try:
         with console.status(f"[cyan]Triaging with {backend.name}/{backend.model}…[/cyan]"):
             report = generate_report(
-                clusters, backend, source=logfile.name,
-                redact=redact_flag, token_budget=token_budget,
+                clusters,
+                backend,
+                source=logfile.name,
+                redact=redact_flag,
+                token_budget=token_budget,
                 evidence=evidence_block(findings),
             )
     except LLMError as exc:
         err_console.print(f"\n[red]LLM error:[/red] {exc}")
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=3) from exc
 
     console.rule("[bold]Incident Report[/bold]")
     render_report(report, console)
@@ -151,11 +174,18 @@ def analyze(
 @app.command()
 def watch(
     logfile: Path = typer.Argument(..., exists=True, readable=True, help="Log file to tail."),
-    fmt: Optional[str] = typer.Option(None, "--format", "-f", help="Force log format: 'text' or 'json'."),
-    min_level: str = typer.Option(
-        "ERROR", "--min-level", "-l", help="Minimum severity to surface while tailing.",
+    fmt: str | None = typer.Option(
+        None, "--format", "-f", help="Force log format: 'text' or 'json'."
     ),
-    redact_flag: bool = typer.Option(False, "--redact", help="Redact PII/secrets in surfaced lines."),
+    min_level: str = typer.Option(
+        "ERROR",
+        "--min-level",
+        "-l",
+        help="Minimum severity to surface while tailing.",
+    ),
+    redact_flag: bool = typer.Option(
+        False, "--redact", help="Redact PII/secrets in surfaced lines."
+    ),
     poll_interval: float = typer.Option(0.5, "--interval", help="Polling interval in seconds."),
 ) -> None:
     """Tail LOGFILE and surface anomalies (errors/warnings) in near-real-time."""
@@ -167,10 +197,12 @@ def watch(
 
     resolved_fmt = fmt
     if resolved_fmt is None:
-        with open(logfile, "r", encoding="utf-8", errors="replace") as handle:
+        with open(logfile, encoding="utf-8", errors="replace") as handle:
             head = [next(handle, "") for _ in range(20)]
         # Reuse the parser's detector via a full parse of the sample.
-        resolved_fmt = "json" if parse_lines(head) and head and head[0].strip().startswith("{") else "text"
+        resolved_fmt = (
+            "json" if parse_lines(head) and head and head[0].strip().startswith("{") else "text"
+        )
 
     console.print(
         f"[bold cyan]Watching[/bold cyan] {logfile} "
@@ -178,13 +210,15 @@ def watch(
     )
 
     severity_color = {
-        Severity.CRITICAL: "bright_red", Severity.ERROR: "red",
-        Severity.WARNING: "yellow", Severity.NOTICE: "cyan",
+        Severity.CRITICAL: "bright_red",
+        Severity.ERROR: "red",
+        Severity.WARNING: "yellow",
+        Severity.NOTICE: "cyan",
     }
     seen_templates: set[str] = set()
     line_no = 0
     try:
-        with open(logfile, "r", encoding="utf-8", errors="replace") as handle:
+        with open(logfile, encoding="utf-8", errors="replace") as handle:
             handle.seek(0, 2)  # jump to end: only surface *new* lines
             while True:
                 line = handle.readline()
@@ -212,22 +246,34 @@ def watch(
 
 @app.command()
 def ship(
-    logfile: Path = typer.Argument(..., exists=True, readable=True, help="Log file to ship to Loki."),
+    logfile: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Log file to ship to Loki."
+    ),
     loki_url: str = typer.Option(
-        DEFAULT_LOKI_URL, "--loki-url", "-u",
+        DEFAULT_LOKI_URL,
+        "--loki-url",
+        "-u",
         help="Base URL of the Loki server.",
     ),
-    source: Optional[str] = typer.Option(
-        None, "--source", "-s",
+    source: str | None = typer.Option(
+        None,
+        "--source",
+        "-s",
         help="Value for the 'source' label (defaults to the file name).",
     ),
-    fmt: Optional[str] = typer.Option(None, "--format", "-f", help="Force log format: 'text' or 'json'."),
-    min_level: Optional[str] = typer.Option(
-        None, "--min-level", "-l",
+    fmt: str | None = typer.Option(
+        None, "--format", "-f", help="Force log format: 'text' or 'json'."
+    ),
+    min_level: str | None = typer.Option(
+        None,
+        "--min-level",
+        "-l",
         help="Only ship entries at/above this severity (default: ship everything).",
     ),
     redact_flag: bool = typer.Option(
-        False, "--redact", help="Strip PII/secrets from log lines before shipping.",
+        False,
+        "--redact",
+        help="Strip PII/secrets from log lines before shipping.",
     ),
 ) -> None:
     """Ship LOGFILE to Grafana Loki, labelled by severity and error cluster.
@@ -260,15 +306,14 @@ def ship(
             shipped = client.push(streams)
     except LokiError as exc:
         err_console.print(f"[red]Loki error:[/red] {exc}")
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=3) from exc
 
     console.print(
         f"[green]Shipped {shipped} entries[/green] across {len(streams)} streams "
         f"(label cluster count: {len({s['stream']['cluster'] for s in streams})}) to {loki_url}."
     )
     console.print(
-        '[dim]In Grafana (Explore → Loki): '
-        '{job="loglens"} | level=~"error|critical"[/dim]'
+        "[dim]In Grafana (Explore → Loki): " '{job="loglens"} | level=~"error|critical"[/dim]'
     )
 
 

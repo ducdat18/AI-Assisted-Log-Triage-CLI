@@ -63,9 +63,7 @@ class GeminiProvider(LLMProvider):
         if response.status_code == 429:
             raise LLMError("Gemini rate limit hit (free tier). Try again shortly.")
         if response.status_code >= 400:
-            raise LLMError(
-                f"Gemini returned HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise LLMError(f"Gemini returned HTTP {response.status_code}: {response.text[:200]}")
 
         try:
             data = response.json()

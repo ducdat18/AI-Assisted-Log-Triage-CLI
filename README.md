@@ -343,8 +343,17 @@ No analysis code changes. Provider selection precedence is
 ```bash
 pip install -e ".[dev]"
 pytest                # run the suite
-pytest --cov          # with coverage
+pytest --cov          # with coverage (CI gate: >=80%)
+
+ruff check src tests  # lint
+black --check src tests  # formatting
+mypy src              # type checking
+bandit -q -c pyproject.toml -r src  # security scan
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above on Python 3.11 and 3.12.
+Optional ML extras (`pip install -e ".[ml]"`) enable heavier analytics backends;
+the core falls back to pure-Python implementations when they are absent.
 
 Unit tests cover the parser, clustering/ranking, redaction, report generation,
 and the full analytics engine — Drain mining, anomaly/onset detection,

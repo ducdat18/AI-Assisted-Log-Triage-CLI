@@ -102,10 +102,11 @@ def choose_bucket_seconds(span_seconds: float) -> int:
     if span_seconds <= 0:
         return _NICE_WIDTHS[0]
     for width in _NICE_WIDTHS:
-        if span_seconds / width <= _TARGET_BUCKETS:
-            # Don't pick a width so large the whole log is a handful of buckets.
-            if span_seconds / width >= _MIN_BUCKETS or width == _NICE_WIDTHS[0]:
-                return width
+        # Don't pick a width so large the whole log is a handful of buckets.
+        if span_seconds / width <= _TARGET_BUCKETS and (
+            span_seconds / width >= _MIN_BUCKETS or width == _NICE_WIDTHS[0]
+        ):
+            return width
     return _NICE_WIDTHS[-1]
 
 
@@ -124,8 +125,9 @@ def bucketize(entries: list[LogEntry], bucket_seconds: int) -> list[TimeBucket]:
     if not timed:
         return []
     width = timedelta(seconds=bucket_seconds)
-    start = min(e.timestamp for e in timed)  # type: ignore[type-var]
-    end = max(e.timestamp for e in timed)  # type: ignore[type-var]
+    stamps = [e.timestamp for e in timed if e.timestamp is not None]
+    start = min(stamps)
+    end = max(stamps)
 
     def index_of(ts: datetime) -> int:
         return int((ts - start).total_seconds() // bucket_seconds)
@@ -135,7 +137,9 @@ def bucketize(entries: list[LogEntry], bucket_seconds: int) -> list[TimeBucket]:
     errors = [0] * n_buckets
     warns = [0] * n_buckets
     for entry in timed:
-        i = index_of(entry.timestamp)  # type: ignore[arg-type]
+        if entry.timestamp is None:
+            continue
+        i = index_of(entry.timestamp)
         totals[i] += 1
         if _is_error(entry.level):
             errors[i] += 1
@@ -163,7 +167,9 @@ def _ewma_zscores(values: list[int], alpha: float = _EWMA_ALPHA) -> list[float]:
             zscores.append(0.0)
         else:
             std = math.sqrt(var)
-            zscores.append((value - mean) / std if std > 1e-9 else (0.0 if value <= mean else math.inf))
+            zscores.append(
+                (value - mean) / std if std > 1e-9 else (0.0 if value <= mean else math.inf)
+            )
         # Update baseline *after* scoring this point.
         delta = value - mean
         mean += alpha * delta
@@ -234,11 +240,16 @@ def detect_anomalies(
     if not timed:
         return AnomalyReport(
             bucket_seconds=bucket_seconds or _NICE_WIDTHS[0],
-            buckets=(), spikes=(), bursts=(), onset=None,
-            baseline_errors=0.0, peak_errors=0,
+            buckets=(),
+            spikes=(),
+            bursts=(),
+            onset=None,
+            baseline_errors=0.0,
+            peak_errors=0,
         )
 
-    span = (max(e.timestamp for e in timed) - min(e.timestamp for e in timed)).total_seconds()
+    stamps = [e.timestamp for e in timed if e.timestamp is not None]
+    span = (max(stamps) - min(stamps)).total_seconds()
     width = bucket_seconds or choose_bucket_seconds(span)
     buckets = bucketize(timed, width)
 
@@ -246,7 +257,7 @@ def detect_anomalies(
     zscores = _ewma_zscores(error_series)
     spikes = [
         Spike(start=b.start, errors=b.errors, baseline=0.0, zscore=z)
-        for b, z in zip(buckets, zscores)
+        for b, z in zip(buckets, zscores, strict=False)
         if z >= _SPIKE_Z and b.errors > 0
     ]
     # Backfill each spike's baseline (mean of error buckets strictly before it).
