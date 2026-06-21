@@ -49,7 +49,8 @@ PII/secrets first.
   4. concrete, prioritized remediation steps.
 - **Outputs** a clean Markdown, **HTML**, or **JSON** report *and* a colored
   terminal summary — and can **post the summary to a Slack/webhook** (`--webhook`).
-- **Watches** a live log file and surfaces anomalies in near-real-time.
+- **Watches** a live log file and surfaces anomalies in near-real-time (CLI or
+  the **web dashboard** with a live cascade graph + confidence — `loglens serve`).
 - **Redacts** emails, IPs, tokens, JWTs, and API keys before anything leaves
   your machine (`--redact`).
 - **Token-aware** hierarchical summarization so large logs never overflow the
@@ -260,6 +261,40 @@ Clusters both logs and classifies every error signature as **new**, **worsened**
 change introduce or worsen any failures?". Deterministic, no LLM. Add `--drain`,
 `--min-level`, or `--all` (to include unchanged signatures).
 
+### Web dashboard (realtime)
+
+```bash
+pip install -e ".[web]"
+loglens serve --logs-dir ./sample_logs        # http://127.0.0.1:8000
+```
+
+A FastAPI dashboard that renders what Grafana can't: the incident **onset**, the
+**cause → effect cascade graph** (Mermaid), per-finding **confidence** badges, the
+ranked clusters, and the deterministic incident report. Pick a log under
+`--logs-dir` (or upload one) and hit **Analyze now**, or tick **Live tail** to
+stream new error lines over Server-Sent Events as they arrive. Flags:
+`--host/--port/--logs-dir/--provider`.
+
+### Run the whole stack with Docker
+
+One command brings up the dashboard, a local Ollama LLM, and Grafana+Loki —
+composable via **profiles** so you only run what you need:
+
+```bash
+# Everything: dashboard (:8000) + local LLM + Grafana (:3000) + Loki (:3100)
+docker compose -f deploy/docker-compose.yml --profile all up -d
+docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+
+# Or subsets:
+docker compose -f deploy/docker-compose.yml --profile dashboard up -d           # just the web UI
+docker compose -f deploy/docker-compose.yml --profile dashboard --profile llm up -d
+docker compose -f deploy/docker-compose.yml --profile observability up -d        # just Grafana+Loki
+```
+
+Drop logs into `./logs/` (mounted into the container at `/logs`) to browse and
+tail them from the dashboard; `sample_logs/` is mounted read-only at
+`/logs/samples`.
+
 ### Visualize in Grafana (Loki)
 
 `loglens ship` pushes parsed log entries to [Grafana Loki](https://grafana.com/oss/loki/),
@@ -270,7 +305,7 @@ Grafana you can collapse thousands of near-identical errors into one series.
 One-command demo stack (Grafana + Loki, pre-provisioned):
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d        # starts Loki :3100 + Grafana :3000
+docker compose -f deploy/docker-compose.yml --profile observability up -d   # Loki :3100 + Grafana :3000
 loglens ship sample_logs/game_server.log
 loglens ship sample_logs/api_server.jsonl --redact
 # open http://localhost:3000  → dashboard "loglens — incident triage" is pre-loaded

@@ -1,12 +1,41 @@
-# One-command Grafana + Loki stack for visualizing loglens output.
+# One-command loglens stack. Profiles let you run just what you need:
 #
-#   docker compose -f deploy/docker-compose.yml up -d
-#   loglens ship ../sample_logs/game_server.log
-#   open http://localhost:3000  (anonymous admin; loglens dashboard pre-loaded)
+#   # Everything (dashboard + local LLM + Grafana/Loki):
+#   docker compose -f deploy/docker-compose.yml --profile all up -d
+#   docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+#   open http://localhost:8000   # loglens dashboard
+#   open http://localhost:3000   # Grafana (loglens dashboard pre-loaded)
+#
+#   # Just the web dashboard:        --profile dashboard
+#   # Dashboard + local LLM:         --profile dashboard --profile llm
+#   # Just Grafana + Loki:           --profile observability
 #
 services:
+  loglens:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    profiles: ["dashboard", "all"]
+    ports:
+      - "8000:8000"
+    environment:
+      LOGLENS_PROVIDER: ollama
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ../logs:/logs                  # drop your own logs here to browse/tail
+      - ../sample_logs:/logs/samples:ro
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm", "all"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
   loki:
     image: grafana/loki:3.0.0
+    profiles: ["observability", "all"]
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "3100:3100"
@@ -21,6 +50,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.1.0
+    profiles: ["observability", "all"]
     ports:
       - "3000:3000"
     environment:
@@ -38,3 +68,4 @@ services:
 
 volumes:
   loki-data: {}
+  ollama-data: {}
